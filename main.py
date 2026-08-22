@@ -35,13 +35,19 @@ _prepare_qt_env()
 
 from PySide6.QtWidgets import QApplication
 
+from app import APP_NAME
+from app.app_icon import apply_dock_icon, build_app_icon
 from app.main_window import MainWindow
 
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("Automater")
-    app.setOrganizationName("Automater")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName(APP_NAME)
+    icon = build_app_icon()
+    app.setWindowIcon(icon)
+    apply_dock_icon(icon)
     window = MainWindow()
     window.show()
     return app.exec()

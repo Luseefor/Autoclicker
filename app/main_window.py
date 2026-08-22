@@ -8,6 +8,7 @@ from PySide6.QtCore import QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -35,10 +36,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import APP_NAME, APP_VERSION
 from app import icons as app_icons
 from app import permissions as perms
 from app import storage
 from app import windows as winmod
+from app.app_icon import build_app_icon
 from app.engine import Engine
 from app.hotkeys import HotkeyManager
 from app.models import Macro, MacroStep, StepType
@@ -260,7 +263,8 @@ class StepEditorDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Automater")
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(build_app_icon())
         self.resize(1100, 760)
         self.setMinimumSize(900, 640)
         self.setStyleSheet(APP_STYLE)
@@ -303,16 +307,66 @@ class MainWindow(QMainWindow):
     # ----- chrome -----
 
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
+        # App menu (merged natively on macOS via action roles)
+        about_act = QAction(f"About {APP_NAME}", self)
+        about_act.setMenuRole(QAction.MenuRole.AboutRole)
+        about_act.triggered.connect(self._show_about)
+        self.menuBar().addAction(about_act)
+
+        prefs_act = QAction("Settings…", self)
+        prefs_act.setMenuRole(QAction.MenuRole.PreferencesRole)
+        prefs_act.setShortcut(QKeySequence.StandardKey.Preferences)
+        prefs_act.triggered.connect(lambda: self.tabs.setCurrentIndex(4))
+        self.menuBar().addAction(prefs_act)
+
         quit_act = QAction("Quit", self)
+        quit_act.setMenuRole(QAction.MenuRole.QuitRole)
         quit_act.setShortcut(QKeySequence.StandardKey.Quit)
         quit_act.triggered.connect(self.close)
-        file_menu.addAction(quit_act)
+        self.menuBar().addAction(quit_act)
+
+        edit_menu = self.menuBar().addMenu("&Edit")
+        for label, cmd, std_key in (
+            ("Cut", "cut", QKeySequence.StandardKey.Cut),
+            ("Copy", "copy", QKeySequence.StandardKey.Copy),
+            ("Paste", "paste", QKeySequence.StandardKey.Paste),
+            ("Select All", "selectAll", QKeySequence.StandardKey.SelectAll),
+        ):
+            act = QAction(label, self)
+            act.setShortcut(std_key)
+            act.triggered.connect(lambda _checked=False, c=cmd: self._forward_edit(c))
+            edit_menu.addAction(act)
+
+        file_menu = self.menuBar().addMenu("&File")
+        close_act = QAction("Close Window", self)
+        close_act.setShortcut(QKeySequence.StandardKey.Close)
+        close_act.triggered.connect(self.close)
+        file_menu.addAction(close_act)
 
         help_menu = self.menuBar().addMenu("&Help")
         access = QAction("Permissions help", self)
         access.triggered.connect(self._show_accessibility_help)
         help_menu.addAction(access)
+
+    def _forward_edit(self, command: str) -> None:
+        widget = QApplication.focusWidget()
+        if widget is not None and hasattr(widget, command):
+            fn = getattr(widget, command)
+            if callable(fn):
+                fn()
+
+    def _show_about(self) -> None:
+        st = perms.get_status()
+        ax = "Granted" if st.accessibility else "Not granted"
+        im = {True: "Granted", False: "Not granted", None: "Unknown"}[st.input_monitoring]
+        QMessageBox.about(
+            self,
+            f"About {APP_NAME}",
+            f"<h3>{APP_NAME} {APP_VERSION}</h3>"
+            "<p>Desktop automation for macOS: auto-clicker, macro recorder,"
+            " and app-localized background clicking.</p>"
+            f"<p>Accessibility: <b>{ax}</b><br>Input Monitoring: <b>{im}</b></p>",
+        )
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -323,9 +377,12 @@ class MainWindow(QMainWindow):
 
         header = QHBoxLayout()
         header.setSpacing(10)
-        brand = QLabel("Automater")
+        brand = QLabel(APP_NAME)
         brand.setObjectName("brand")
         header.addWidget(brand)
+        version = QLabel(f"v{APP_VERSION}")
+        version.setObjectName("subtitle")
+        header.addWidget(version)
         header.addStretch(1)
         self.status_pill = QLabel("Idle")
         self.status_pill.setObjectName("statusPill")
