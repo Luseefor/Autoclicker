@@ -186,9 +186,12 @@ class StepEditorDialog(QDialog):
         return rows
 
     def _rebuild(self) -> None:
-        while self.form.rowCount():
-            self.form.removeRow(0)
-        self.form.addRow("Type", self.type_box)
+        # takeRow (not removeRow) — removeRow deletes the row's widgets,
+        # but these are long-lived attrs reused on every rebuild.
+        while self.form.rowCount() > 1:
+            self.form.takeRow(self.form.rowCount() - 1)
+        if self.form.rowCount() == 0:
+            self.form.addRow("Type", self.type_box)
         t = str(self.type_box.currentData())
         for label, widget in self._rows_for(t):
             self.form.addRow(label, widget)
