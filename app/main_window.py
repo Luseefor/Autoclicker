@@ -406,8 +406,8 @@ class MainWindow(QMainWindow):
         self.bg_click = QCheckBox("Click target app in background (keep game on top)")
         self.bg_click.setChecked(False)
         self.bg_click.setToolTip(
-            "Also send clicks to the target app without bringing it forward. "
-            "The pointer still moves to each stored point."
+            "Send clicks straight to the target app without bringing it forward.\n"
+            "Your pointer stays exactly where it is."
         )
         form.addWidget(self.bg_click)
         form.addStretch(1)
@@ -768,6 +768,9 @@ class MainWindow(QMainWindow):
 
         self.target_bg_click = QCheckBox("Also click it in the background")
         self.target_bg_click.setChecked(False)
+        self.target_bg_click.setToolTip(
+            "Clicks are delivered to this app without moving your pointer."
+        )
         tf.addWidget(self.target_bg_click)
 
         self.rec_use_target = QCheckBox("Use this target when recording")

@@ -184,38 +184,37 @@ def _click_at(
     pid: int | None = None,
     move_cursor: bool = True,
 ) -> None:
-    """Click at screen coordinates. Always warps the pointer first so the
-    click is not delivered at the old cursor position."""
+    """Click at screen coordinates.
+
+    With a target pid the click goes straight to that process via
+    CGEventPostToPid — the physical cursor never moves. Without one we
+    warp the pointer first so the HID click lands at (x, y)."""
     if x is None or y is None:
         x, y = _cursor_pos()
     code = _button_code(button)
+
+    def _click_series(target_pid: int | None) -> None:
+        for i in range(max(1, count)):
+            state = i + 1
+            _mouse_down(x, y, code, pid=target_pid, click_state=state)
+            time.sleep(0.012)
+            _mouse_up(x, y, code, pid=target_pid, click_state=state)
+            if i + 1 < count:
+                time.sleep(0.05)
+
+    if pid:
+        # Pure background delivery: no warp, no global HID tap.
+        for target in _pids_at_point(int(pid), x, y):
+            _move_cursor(x, y, pid=target)
+            _click_series(target)
+        return
 
     if move_cursor:
         _warp_cursor(x, y)
         time.sleep(0.02)
         _move_cursor(x, y)
-        if pid:
-            _move_cursor(x, y, pid=int(pid))
 
-    # HID click at the warped pointer (this is what actually hits the screen).
-    for i in range(max(1, count)):
-        state = i + 1
-        _mouse_down(x, y, code, pid=None, click_state=state)
-        time.sleep(0.012)
-        _mouse_up(x, y, code, pid=None, click_state=state)
-        if i + 1 < count:
-            time.sleep(0.05)
-
-    if pid:
-        for target in _pids_at_point(int(pid), x, y):
-            _move_cursor(x, y, pid=target)
-            for i in range(max(1, count)):
-                state = i + 1
-                _mouse_down(x, y, code, pid=target, click_state=state)
-                time.sleep(0.012)
-                _mouse_up(x, y, code, pid=target, click_state=state)
-                if i + 1 < count:
-                    time.sleep(0.05)
+    _click_series(None)
 
 
 def _mouse_down(
