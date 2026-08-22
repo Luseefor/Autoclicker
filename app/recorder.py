@@ -19,6 +19,10 @@ StepsCallback = Callable[[list[MacroStep]], None]
 class Recorder:
     """Capture clicks, moves, drags, and keys with relative delays."""
 
+    _MOD_NAMES = {"cmd", "shift", "ctrl", "alt"}
+    # Canonical order for recorded chord strings (ctrl+alt+shift+c → cmd+c)
+    _MOD_ORDER = ["ctrl", "alt", "shift", "cmd"]
+
     def __init__(
         self,
         on_status: StatusCallback | None = None,
@@ -47,6 +51,9 @@ class Recorder:
         self._press_button: str | None = None
         self._press_time: float | None = None
         self._drag_moved = False
+        # Modifier chord tracking
+        self._held_mods: set[str] = set()
+        self._combo_pending: str | None = None
 
     @property
     def recording(self) -> bool:
@@ -133,6 +140,8 @@ class Recorder:
         self._last_t = time.perf_counter()
         self._press_pos = None
         self._drag_moved = False
+        self._held_mods.clear()
+        self._combo_pending = None
         self._on_status("Recording…")
 
         def on_click(x, y, button, pressed):
@@ -242,15 +251,27 @@ class Recorder:
         def on_press(name: str, _event) -> None:
             if not self._recording or not self.record_keys:
                 return
-            if name in {"cmd", "shift", "ctrl", "alt"}:
+            if name in self._MOD_NAMES:
+                self._held_mods.add(name)
                 return
             delay = self._elapsed_ms()
+            if self._held_mods:
+                ordered = [m for m in self._MOD_ORDER if m in self._held_mods]
+                combo = "+".join(ordered + [name])
+                self._append(MacroStep(type=StepType.KEY, key=combo, delay_ms=delay))
+                self._combo_pending = name
+                return
             self._append(MacroStep(type=StepType.KEY_DOWN, key=name, delay_ms=delay))
 
         def on_release(name: str, _event) -> None:
             if not self._recording or not self.record_keys:
                 return
-            if name in {"cmd", "shift", "ctrl", "alt"}:
+            if name in self._MOD_NAMES:
+                self._held_mods.discard(name)
+                return
+            if self._combo_pending == name:
+                # Combo was already recorded as a single KEY step on press.
+                self._combo_pending = None
                 return
             delay = self._elapsed_ms()
             with self._lock:

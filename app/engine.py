@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import threading
 import time
 from typing import Callable
@@ -62,6 +63,42 @@ def _resolve_key(name: str):
     if len(name) == 1:
         return name
     return getattr(Key, lowered, name)
+
+
+_CHORD_MODS = {
+    "cmd": Key.cmd,
+    "command": Key.cmd,
+    "ctrl": Key.ctrl,
+    "control": Key.ctrl,
+    "alt": Key.alt,
+    "option": Key.alt,
+    "opt": Key.alt,
+    "shift": Key.shift,
+}
+
+
+def _resolve_chord(name: str) -> tuple[list, object | None]:
+    """Resolve 'ctrl+shift+t' into ([Key.ctrl, Key.shift], 't').
+
+    Modifier parts must resolve to pynput modifier keys; anything else is
+    treated as the (single) tail key. Returns ([], tail) for plain keys.
+    """
+    parts = [p for p in re.split(r"\+", name or "") if p.strip()]
+    if not parts:
+        return [], None
+    if len(parts) == 1:
+        return [], _resolve_key(parts[0])
+    mods: list = []
+    tails: list[str] = []
+    for raw in parts:
+        resolved = _resolve_key(raw)
+        if raw.lower() in _CHORD_MODS and not isinstance(resolved, str):
+            if resolved not in mods:
+                mods.append(resolved)
+        else:
+            tails.append(raw)
+    tail = _resolve_key("+".join(tails)) if tails else None
+    return mods, tail
 
 
 def _button_code(name: str | None) -> int:
@@ -703,18 +740,29 @@ class Engine:
                     _move_cursor(xy[0], xy[1])
             _scroll(step.dx or 0, step.dy or 0)
         elif step.type == StepType.KEY:
-            key = _resolve_key(step.key or "")
-            if key is not None:
-                self.keyboard.press(key)
-                self.keyboard.release(key)
+            mods, tail = _resolve_chord(step.key or "")
+            if tail is not None or mods:
+                for m in mods:
+                    self.keyboard.press(m)
+                try:
+                    if tail is not None:
+                        self.keyboard.press(tail)
+                        self.keyboard.release(tail)
+                finally:
+                    for m in reversed(mods):
+                        self.keyboard.release(m)
         elif step.type == StepType.KEY_DOWN:
-            key = _resolve_key(step.key or "")
-            if key is not None:
-                self.keyboard.press(key)
+            mods, tail = _resolve_chord(step.key or "")
+            if tail is not None:
+                for m in mods:
+                    self.keyboard.press(m)
+                self.keyboard.press(tail)
         elif step.type == StepType.KEY_UP:
-            key = _resolve_key(step.key or "")
-            if key is not None:
-                self.keyboard.release(key)
+            mods, tail = _resolve_chord(step.key or "")
+            if tail is not None:
+                self.keyboard.release(tail)
+            for m in reversed(mods):
+                self.keyboard.release(m)
         elif step.type == StepType.TYPE:
             if step.text:
                 self.keyboard.type(step.text)
