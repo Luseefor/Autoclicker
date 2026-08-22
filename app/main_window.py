@@ -55,142 +55,206 @@ class Bridge(QWidget):
 
 
 class StepEditorDialog(QDialog):
+    """Context-aware step editor: shows only fields relevant to the type."""
+
+    _POSITIONAL = {"click", "move", "drag", "hold"}
+    _KEY_TYPES = {"key", "key_down", "key_up"}
+
     def __init__(self, parent: QWidget | None = None, step: MacroStep | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit step")
-        self.setMinimumWidth(400)
-        layout = QFormLayout(self)
+        self.setMinimumWidth(430)
+        # Base dict keeps fields the form does not manage (pid, window_id, …)
+        self._base: dict = (
+            step.to_dict() if step is not None else MacroStep(type=StepType.CLICK.value).to_dict()
+        )
 
-        self.type_box = QComboBox()
-        for t in StepType:
-            self.type_box.addItem(t.value, t.value)
-        self.coord_space = QComboBox()
-        self.coord_space.addItems(["screen", "window"])
-        self.x = QSpinBox()
-        self.x.setRange(-20000, 20000)
-        self.y = QSpinBox()
-        self.y.setRange(-20000, 20000)
-        self.local_x = QDoubleSpinBox()
-        self.local_x.setRange(-20000, 20000)
-        self.local_y = QDoubleSpinBox()
-        self.local_y.setRange(-20000, 20000)
-        self.end_x = QSpinBox()
-        self.end_x.setRange(-20000, 20000)
-        self.end_y = QSpinBox()
-        self.end_y.setRange(-20000, 20000)
-        self.button = QComboBox()
-        self.button.addItems(["left", "right", "middle"])
-        self.click_kind = QComboBox()
-        self.click_kind.addItems(["single", "double", "triple"])
-        self.key = QLineEdit()
-        self.text = QLineEdit()
-        self.delay = QSpinBox()
-        self.delay.setRange(0, 600_000)
-        self.delay.setSuffix(" ms")
-        self.hold = QSpinBox()
-        self.hold.setRange(0, 600_000)
-        self.hold.setSuffix(" ms")
-        self.clicks = QSpinBox()
-        self.clicks.setRange(1, 20)
-        self.dx = QSpinBox()
-        self.dx.setRange(-100, 100)
-        self.dy = QSpinBox()
-        self.dy.setRange(-100, 100)
-        self.app_bundle = QLineEdit()
-        self.app_name = QLineEdit()
-        self.window_title = QLineEdit()
-        self.timeout = QSpinBox()
-        self.timeout.setRange(0, 600_000)
-        self.timeout.setSuffix(" ms")
-        self.timeout.setValue(10_000)
-
-        layout.addRow("Type", self.type_box)
-        layout.addRow("Coord space", self.coord_space)
-        layout.addRow("X", self.x)
-        layout.addRow("Y", self.y)
-        layout.addRow("Local X", self.local_x)
-        layout.addRow("Local Y", self.local_y)
-        layout.addRow("End X", self.end_x)
-        layout.addRow("End Y", self.end_y)
-        layout.addRow("Button", self.button)
-        layout.addRow("Click kind", self.click_kind)
-        layout.addRow("Key", self.key)
-        layout.addRow("Text", self.text)
-        layout.addRow("Delay", self.delay)
-        layout.addRow("Hold", self.hold)
-        layout.addRow("Clicks", self.clicks)
-        layout.addRow("Scroll dx", self.dx)
-        layout.addRow("Scroll dy", self.dy)
-        layout.addRow("App bundle id", self.app_bundle)
-        layout.addRow("App name", self.app_name)
-        layout.addRow("Window title", self.window_title)
-        layout.addRow("Timeout", self.timeout)
+        outer = QVBoxLayout(self)
+        self.form = QFormLayout()
+        self.form.setSpacing(8)
+        outer.addLayout(self.form)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
+        outer.addWidget(buttons)
 
-        if step:
-            idx = self.type_box.findData(step.type)
-            if idx >= 0:
-                self.type_box.setCurrentIndex(idx)
-            self.coord_space.setCurrentText(step.coord_space or "screen")
-            if step.x is not None:
-                self.x.setValue(int(step.x))
-            if step.y is not None:
-                self.y.setValue(int(step.y))
-            if step.local_x is not None:
-                self.local_x.setValue(step.local_x)
-            if step.local_y is not None:
-                self.local_y.setValue(step.local_y)
-            if step.end_x is not None:
-                self.end_x.setValue(int(step.end_x))
-            if step.end_y is not None:
-                self.end_y.setValue(int(step.end_y))
-            if step.button:
-                self.button.setCurrentText(step.button)
-            self.click_kind.setCurrentText(step.click_kind or "single")
-            self.key.setText(step.key or "")
-            self.text.setText(step.text or "")
-            self.delay.setValue(step.delay_ms)
-            self.hold.setValue(step.hold_ms)
-            self.clicks.setValue(step.clicks)
-            if step.dx is not None:
-                self.dx.setValue(step.dx)
-            if step.dy is not None:
-                self.dy.setValue(step.dy)
-            self.app_bundle.setText(step.app_bundle_id or "")
-            self.app_name.setText(step.app_name or "")
-            self.window_title.setText(step.window_title or "")
-            self.timeout.setValue(step.timeout_ms)
+        # --- widgets (created once, rows shown per type) ---
+        self.type_box = QComboBox()
+        labels = {
+            StepType.CLICK: "Click",
+            StepType.MOVE: "Move cursor",
+            StepType.KEY: "Press key / chord",
+            StepType.KEY_DOWN: "Key down",
+            StepType.KEY_UP: "Key up",
+            StepType.TYPE: "Type text",
+            StepType.DELAY: "Delay",
+            StepType.SCROLL: "Scroll",
+            StepType.DRAG: "Drag",
+            StepType.HOLD: "Hold mouse button",
+            StepType.ACTIVATE_APP: "Activate app",
+            StepType.WAIT_WINDOW: "Wait for window",
+        }
+        for t in StepType:
+            self.type_box.addItem(labels.get(t, t.value), t.value)
+        idx = self.type_box.findData(self._base.get("type"))
+        if idx >= 0:
+            self.type_box.setCurrentIndex(idx)
+        self.type_box.currentIndexChanged.connect(self._rebuild)
+
+        self.coord_space = QComboBox()
+        self.coord_space.addItems(["screen", "window"])
+        self.coord_space.setCurrentText(str(self._base.get("coord_space") or "screen"))
+        self.coord_space.currentIndexChanged.connect(self._rebuild)
+
+        self.x = QSpinBox(); self.x.setRange(-20000, 20000)
+        self.y = QSpinBox(); self.y.setRange(-20000, 20000)
+        self.local_x = QDoubleSpinBox(); self.local_x.setRange(-20000, 20000); self.local_x.setDecimals(1)
+        self.local_y = QDoubleSpinBox(); self.local_y.setRange(-20000, 20000); self.local_y.setDecimals(1)
+        self.end_x = QSpinBox(); self.end_x.setRange(-20000, 20000)
+        self.end_y = QSpinBox(); self.end_y.setRange(-20000, 20000)
+        self.end_local_x = QDoubleSpinBox(); self.end_local_x.setRange(-20000, 20000); self.end_local_x.setDecimals(1)
+        self.end_local_y = QDoubleSpinBox(); self.end_local_y.setRange(-20000, 20000); self.end_local_y.setDecimals(1)
+        self.button = QComboBox(); self.button.addItems(["left", "right", "middle"])
+        self.click_kind = QComboBox(); self.click_kind.addItems(["single", "double", "triple"])
+        self.key = QLineEdit(); self.key.setPlaceholderText("a · enter · f5 · cmd+c · ctrl+shift+t")
+        self.text = QLineEdit()
+        self.delay = QSpinBox(); self.delay.setRange(0, 600_000); self.delay.setSuffix(" ms")
+        self.hold = QSpinBox(); self.hold.setRange(0, 600_000); self.hold.setSuffix(" ms")
+        self.clicks = QSpinBox(); self.clicks.setRange(1, 20)
+        self.dx = QSpinBox(); self.dx.setRange(-1000, 1000)
+        self.dy = QSpinBox(); self.dy.setRange(-1000, 1000)
+        self.app_bundle = QLineEdit(); self.app_bundle.setPlaceholderText("com.apple.Safari")
+        self.app_name = QLineEdit(); self.app_name.setPlaceholderText("Safari")
+        self.window_title = QLineEdit()
+        self.timeout = QSpinBox(); self.timeout.setRange(0, 600_000); self.timeout.setSuffix(" ms")
+
+        self._load_from_base()
+        self._rebuild()
+
+    # ----- form assembly -----
+
+    def _rows_for(self, t: str) -> list[tuple[str, object]]:
+        rows: list[tuple[str, object]] = []
+        window_space = self.coord_space.currentText() == "window"
+
+        if t in self._POSITIONAL:
+            rows.append(("Coord space", self.coord_space))
+            if window_space:
+                rows.append(("Local X", self.local_x))
+                rows.append(("Local Y", self.local_y))
+                rows.append(("Target app name", self.app_name))
+                rows.append(("Target bundle id", self.app_bundle))
+                rows.append(("Window title", self.window_title))
+            else:
+                rows.append(("Screen X", self.x))
+                rows.append(("Screen Y", self.y))
+
+        if t == "click":
+            rows += [("Button", self.button), ("Click type", self.click_kind), ("Clicks", self.clicks)]
+        elif t == "drag":
+            if window_space:
+                rows += [("End local X", self.end_local_x), ("End local Y", self.end_local_y)]
+            else:
+                rows += [("End screen X", self.end_x), ("End screen Y", self.end_y)]
+            rows.append(("Button", self.button))
+        elif t == "hold":
+            rows += [("Button", self.button), ("Hold duration", self.hold)]
+        elif t in self._KEY_TYPES:
+            rows.append(("Key", self.key))
+        elif t == "type":
+            rows.append(("Text", self.text))
+        elif t == "scroll":
+            rows += [("Scroll dx", self.dx), ("Scroll dy", self.dy)]
+        elif t == "activate_app":
+            rows += [("App name", self.app_name), ("App bundle id", self.app_bundle)]
+        elif t == "wait_window":
+            rows += [
+                ("App name", self.app_name),
+                ("App bundle id", self.app_bundle),
+                ("Window title", self.window_title),
+                ("Timeout", self.timeout),
+            ]
+
+        if t != "delay":
+            rows.append(("Then wait", self.delay))
+        return rows
+
+    def _rebuild(self) -> None:
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        self.form.addRow("Type", self.type_box)
+        t = str(self.type_box.currentData())
+        for label, widget in self._rows_for(t):
+            self.form.addRow(label, widget)
+        if t in self._KEY_TYPES:
+            hint = QLabel("Combine modifiers with +, e.g. cmd+shift+c.")
+            hint.setObjectName("subtitle")
+            self.form.addRow("", hint)
+
+    def _load_from_base(self) -> None:
+        b = self._base
+        if b.get("x") is not None:
+            self.x.setValue(int(b["x"]))
+        if b.get("y") is not None:
+            self.y.setValue(int(b["y"]))
+        if b.get("local_x") is not None:
+            self.local_x.setValue(float(b["local_x"]))
+        if b.get("local_y") is not None:
+            self.local_y.setValue(float(b["local_y"]))
+        if b.get("end_x") is not None:
+            self.end_x.setValue(int(b["end_x"]))
+        if b.get("end_y") is not None:
+            self.end_y.setValue(int(b["end_y"]))
+        if b.get("end_local_x") is not None:
+            self.end_local_x.setValue(float(b["end_local_x"]))
+        if b.get("end_local_y") is not None:
+            self.end_local_y.setValue(float(b["end_local_y"]))
+        if b.get("button"):
+            self.button.setCurrentText(str(b["button"]))
+        self.click_kind.setCurrentText(str(b.get("click_kind") or "single"))
+        self.key.setText(str(b.get("key") or ""))
+        self.text.setText(str(b.get("text") or ""))
+        self.delay.setValue(int(b.get("delay_ms") or 0))
+        self.hold.setValue(int(b.get("hold_ms") or 0))
+        self.clicks.setValue(int(b.get("clicks") or 1))
+        if b.get("dx") is not None:
+            self.dx.setValue(int(b["dx"]))
+        if b.get("dy") is not None:
+            self.dy.setValue(int(b["dy"]))
+        self.app_bundle.setText(str(b.get("app_bundle_id") or ""))
+        self.app_name.setText(str(b.get("app_name") or ""))
+        self.window_title.setText(str(b.get("window_title") or ""))
+        self.timeout.setValue(int(b.get("timeout_ms") or 10_000))
 
     def result_step(self) -> MacroStep:
-        return MacroStep(
-            type=self.type_box.currentData(),
-            coord_space=self.coord_space.currentText(),
-            x=self.x.value(),
-            y=self.y.value(),
-            local_x=self.local_x.value(),
-            local_y=self.local_y.value(),
-            end_x=self.end_x.value(),
-            end_y=self.end_y.value(),
-            button=self.button.currentText(),
-            click_kind=self.click_kind.currentText(),
-            key=self.key.text().strip() or None,
-            text=self.text.text() or None,
-            delay_ms=self.delay.value(),
-            hold_ms=self.hold.value(),
-            clicks=self.clicks.value(),
-            dx=self.dx.value(),
-            dy=self.dy.value(),
-            app_bundle_id=self.app_bundle.text().strip() or None,
-            app_name=self.app_name.text().strip() or None,
-            window_title=self.window_title.text().strip() or None,
-            timeout_ms=self.timeout.value(),
-        )
+        d = dict(self._base)
+        d["type"] = str(self.type_box.currentData())
+        d["coord_space"] = self.coord_space.currentText()
+        d["x"] = self.x.value()
+        d["y"] = self.y.value()
+        d["local_x"] = self.local_x.value()
+        d["local_y"] = self.local_y.value()
+        d["end_x"] = self.end_x.value()
+        d["end_y"] = self.end_y.value()
+        d["end_local_x"] = self.end_local_x.value()
+        d["end_local_y"] = self.end_local_y.value()
+        d["button"] = self.button.currentText()
+        d["click_kind"] = self.click_kind.currentText()
+        d["key"] = self.key.text().strip() or None
+        d["text"] = self.text.text() or None
+        d["delay_ms"] = self.delay.value()
+        d["hold_ms"] = self.hold.value()
+        d["clicks"] = self.clicks.value()
+        d["dx"] = self.dx.value()
+        d["dy"] = self.dy.value()
+        d["app_bundle_id"] = self.app_bundle.text().strip() or None
+        d["app_name"] = self.app_name.text().strip() or None
+        d["window_title"] = self.window_title.text().strip() or None
+        d["timeout_ms"] = self.timeout.value()
+        return MacroStep.from_dict(d)
 
 
 class MainWindow(QMainWindow):
@@ -520,12 +584,14 @@ class MainWindow(QMainWindow):
 
         self.step_list = QListWidget()
         self.step_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.step_list.itemDoubleClicked.connect(self._edit_step)
         right_l.addWidget(self.step_list, 1)
 
         step_btns = QHBoxLayout()
         for label, slot in (
             ("Add step", self._add_step),
             ("Edit", self._edit_step),
+            ("Duplicate", self._duplicate_step),
             ("Remove", self._remove_step),
             ("↑", lambda: self._move_step(-1)),
             ("↓", lambda: self._move_step(1)),
@@ -1598,16 +1664,29 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, step)
             self.step_list.addItem(item)
 
-    def _edit_step(self) -> None:
-        item = self.step_list.currentItem()
+    def _edit_step(self, item=None) -> None:
+        item = item or self.step_list.currentItem()
         if not item:
             return
+        self.step_list.setCurrentItem(item)
         step = item.data(Qt.ItemDataRole.UserRole)
         dlg = StepEditorDialog(self, step)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             updated = dlg.result_step()
             item.setData(Qt.ItemDataRole.UserRole, updated)
             item.setText(updated.label())
+
+    def _duplicate_step(self) -> None:
+        item = self.step_list.currentItem()
+        if not item:
+            return
+        step: MacroStep = item.data(Qt.ItemDataRole.UserRole)
+        copy = MacroStep.from_dict(step.to_dict())
+        row = self.step_list.currentRow() + 1
+        dup = QListWidgetItem(copy.label())
+        dup.setData(Qt.ItemDataRole.UserRole, copy)
+        self.step_list.insertItem(row, dup)
+        self.step_list.setCurrentItem(dup)
 
     def _remove_step(self) -> None:
         row = self.step_list.currentRow()
