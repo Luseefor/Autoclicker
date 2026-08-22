@@ -193,6 +193,81 @@ def _pids_at_point(app_pid: int, x: float, y: float) -> list[int]:
     return pids
 
 
+_FLAG_FOR_MOD = {
+    "cmd": "kCGEventFlagMaskCommand",
+    "command": "kCGEventFlagMaskCommand",
+    "ctrl": "kCGEventFlagMaskControl",
+    "control": "kCGEventFlagMaskControl",
+    "alt": "kCGEventFlagMaskAlternate",
+    "option": "kCGEventFlagMaskAlternate",
+    "opt": "kCGEventFlagMaskAlternate",
+    "shift": "kCGEventFlagMaskShift",
+}
+
+
+def _post_key_combo_to_pid(pid: int, combo: str) -> bool:
+    """Send a key (or modifier chord like 'cmd+c') straight to a process.
+
+    Returns False when any part of the combo has no virtual keycode or
+    posting failed, so the caller can fall back to global delivery.
+    """
+    from app import keycodes as kc
+
+    parts = [p for p in re.split(r"\+", combo or "") if p.strip()]
+    if not parts:
+        return False
+    mods: list[int] = []
+    tail: int | None = None
+    for raw in parts:
+        lowered = raw.strip().lower()
+        code = kc.keycode_for(lowered)
+        if code is None:
+            return False
+        if lowered in _FLAG_FOR_MOD:
+            mods.append(code)
+        else:
+            tail = code
+    if tail is None:
+        return False
+
+    try:
+        from Quartz import (
+            CGEventCreateKeyboardEvent,
+            CGEventPostToPid,
+            CGEventSetFlags,
+        )
+
+        flag_names = [_FLAG_FOR_MOD[p.strip().lower()] for p in parts
+                      if p.strip().lower() in _FLAG_FOR_MOD]
+        flags = 0
+        if flag_names:
+            import Quartz as _Q
+
+            flags = 0
+            for fname in flag_names:
+                flags |= getattr(_Q, fname)
+        src = _event_source(private=True)
+
+        def post(keycode: int, down: bool) -> None:
+            event = CGEventCreateKeyboardEvent(src, int(keycode), bool(down))
+            if event is None:
+                raise RuntimeError("CGEventCreateKeyboardEvent failed")
+            if flags:
+                CGEventSetFlags(event, flags)
+            CGEventPostToPid(int(pid), event)
+
+        for code in mods:
+            post(code, True)
+        post(tail, True)
+        time.sleep(0.008)
+        post(tail, False)
+        for code in reversed(mods):
+            post(code, False)
+        return True
+    except Exception:
+        return False
+
+
 def _warp_cursor(x: float, y: float) -> None:
     """Actually move the system pointer. MouseMoved events alone do not."""
     try:
@@ -740,17 +815,21 @@ class Engine:
                     _move_cursor(xy[0], xy[1])
             _scroll(step.dx or 0, step.dy or 0)
         elif step.type == StepType.KEY:
-            mods, tail = _resolve_chord(step.key or "")
-            if tail is not None or mods:
-                for m in mods:
-                    self.keyboard.press(m)
-                try:
-                    if tail is not None:
-                        self.keyboard.press(tail)
-                        self.keyboard.release(tail)
-                finally:
-                    for m in reversed(mods):
-                        self.keyboard.release(m)
+            delivered = False
+            if background_to_app and step_pid:
+                delivered = _post_key_combo_to_pid(int(step_pid), step.key or "")
+            if not delivered:
+                mods, tail = _resolve_chord(step.key or "")
+                if tail is not None or mods:
+                    for m in mods:
+                        self.keyboard.press(m)
+                    try:
+                        if tail is not None:
+                            self.keyboard.press(tail)
+                            self.keyboard.release(tail)
+                    finally:
+                        for m in reversed(mods):
+                            self.keyboard.release(m)
         elif step.type == StepType.KEY_DOWN:
             mods, tail = _resolve_chord(step.key or "")
             if tail is not None:
