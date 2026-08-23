@@ -55,6 +55,14 @@ case "trusted":
     print(AXBridge.isTrustedForAccessibility ? "yes" : "no")
     exit(0)
 
+case "axprobe":
+    guard let pid = flags.next("pid").flatMap(Int.init),
+          let xs = flags.next("x"), let x = Double(xs),
+          let ys = flags.next("y"), let y = Double(ys)
+    else { fail("axprobe needs --pid --x --y") }
+    print(AXBridge.describeElementAt(appPID: pid_t(pid), x: x, y: y))
+    exit(0)
+
 case "click-fixed":
     guard let xs = flags.next("x"), let x = Int(xs),
           let ys = flags.next("y"), let y = Int(ys)
@@ -75,6 +83,9 @@ case "click-fixed":
     // Explicit background target pinning (skips fuzzy name resolution).
     config.targetPid = flags.next("pid").flatMap(Int.init)
     config.targetWindowId = flags.next("window-id").flatMap(Int.init)
+    if let dm = flags.next("delivery") {
+        config.deliveryMode = ClickerConfig.DeliveryMode(rawValue: dm) ?? .events
+    }
 
     if config.backgroundToApp,
        config.appName == nil && config.windowTitle == nil && config.targetPid == nil {
@@ -132,6 +143,9 @@ case "multipoint":
     config.repeatCount = Int(flags.next("repeat") ?? "") ?? specs.count
     config.clickKind = ClickKind(rawValue: flags.next("kind") ?? "single") ?? .single
     config.backgroundToApp = flags.has("bg")
+    if let dm = flags.next("delivery") {
+        config.deliveryMode = ClickerConfig.DeliveryMode(rawValue: dm) ?? .events
+    }
 
     let engine = ClickerEngine()
     let done = DispatchSemaphore(value: 0)

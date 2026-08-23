@@ -26,6 +26,7 @@ WIN_POS = (140, 140)
 WIN_SIZE = "--window-size=1000,760"
 
 ENGINE = os.environ.get("AUTOMATER_E2E_ENGINE", "swift").lower()
+BG_DELIVERY = os.environ.get("AUTOMATER_E2E_BG", "accessibility")  # events|accessibility
 CLI = ROOT / "AutomaterMac" / ".build" / "debug" / "automater-cli"
 
 PASS: list[str] = []
@@ -102,7 +103,7 @@ def main() -> int:
         if pid:
             args += ["--pid", str(pid), "--window-id", str(window_id or 0)]
         if bg:
-            args.append("--bg")
+            args += ["--bg", "--delivery", BG_DELIVERY]
         subprocess.run(args, check=True)
 
     def sw_multipoint(points, pid, interval, repeat, kind="single"):
@@ -112,7 +113,7 @@ def main() -> int:
         for p in points:
             args += ["--point", f"{int(p[0])},{int(p[1])}",
                      "--point-pid", str(pid)]
-        args.append("--bg")
+        args += ["--bg", "--delivery", BG_DELIVERY]
         subprocess.run(args, check=True)
 
     def sw_cursor():
@@ -140,7 +141,11 @@ def main() -> int:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             headless=False,
-            args=[f"--window-position={WIN_POS[0]},{WIN_POS[1]}", WIN_SIZE],
+            args=[
+                f"--window-position={WIN_POS[0]},{WIN_POS[1]}",
+                WIN_SIZE,
+                "--force-renderer-accessibility",
+            ],
         )
         page = browser.new_page(viewport=None)
 
@@ -258,10 +263,16 @@ def main() -> int:
             driver_click(double[0], double[1], 1200, 2, kind="double",
                          app_name=APP_NAME, bg=True)
             e = settle(4, 8)
-            check("bg double ×2 → 2 dblclicks", e["dblclicks"] == 2,
-                  f"got {e['dblclicks']}")
             n = len(e["clicks"])
-            check("bg double fires no duplicates", n == 4, f"got {n} raw clicks")
+            if BG_DELIVERY == "events":
+                check("bg double ×2 → 2 dblclicks", e["dblclicks"] == 2,
+                      f"got {e['dblclicks']}")
+                check("bg double fires no duplicates", n == 4, f"got {n} raw")
+            else:
+                zs = [c["zone"] for c in e["clicks"]]
+                check("bg double ×2 delivers 4 presses", n == 4, f"got {n}")
+                check("bg double presses hit DOUBLE zone", zs.count("double") == n,
+                      str(zs))
         case("bg_double", c4)
 
         # CASE 5 — multipoint alternation in background (pid-tagged points)

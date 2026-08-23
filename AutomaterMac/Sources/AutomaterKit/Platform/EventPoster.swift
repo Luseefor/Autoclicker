@@ -125,6 +125,21 @@ public struct EventPoster: Sendable {
         }
     }
 
+    /// AXPress-based background click: no synthetic events at all.
+    public func axClick(
+        x: Double, y: Double,
+        pid: pid_t,
+        button: MouseButton = .left,
+        kind: ClickKind = .single
+    ) {
+        for _ in 0..<kind.presses {
+            AXBridge.pressAt(appPID: pid, x: x, y: y)
+            if kind.presses > 1 {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+    }
+
     // MARK: - Keyboard
 
     /// Posts a key or chord ("cmd+c") to a process. Returns false when any

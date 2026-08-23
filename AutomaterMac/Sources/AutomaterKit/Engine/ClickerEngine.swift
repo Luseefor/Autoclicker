@@ -132,11 +132,19 @@ public actor ClickerEngine {
                 }
 
                 // Chromium-family apps build their AX tree lazily on first
-                // query; the first pid-targeted burst is otherwise swallowed.
+                // query; poke until an element resolves (max ~3s) so neither
+                // AX presses nor event routing get swallowed.
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
-                    _ = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
-                    try await Task.sleep(nanoseconds: 400_000_000)
+                    AXBridge.enableAccessibility(appPID: pid)
+                    for _ in 0..<20 {
+                        if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
+                            break
+                        }
+                        try await Task.sleep(nanoseconds: 150_000_000)
+                        try Task.checkCancellation()
+                    }
+                    try await Task.sleep(nanoseconds: 300_000_000)
                     try Task.checkCancellation()
                 }
 
@@ -163,15 +171,21 @@ public actor ClickerEngine {
 
     private func deliver(point: CGPoint, target: ResolvedTarget, config: ClickerConfig) {
         if config.backgroundToApp, let pid = target.pid {
-            let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
-            poster.backgroundClick(
-                x: point.x, y: point.y,
-                pid: pid,
-                childPIDs: Array(children.dropFirst()),
-                windowNumber: target.windowNumber,
-                button: config.button,
-                kind: config.clickKind
-            )
+            switch config.deliveryMode {
+            case .accessibility:
+                poster.axClick(x: point.x, y: point.y, pid: pid,
+                               button: config.button, kind: config.clickKind)
+            case .events:
+                let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
+                poster.backgroundClick(
+                    x: point.x, y: point.y,
+                    pid: pid,
+                    childPIDs: Array(children.dropFirst()),
+                    windowNumber: target.windowNumber,
+                    button: config.button,
+                    kind: config.clickKind
+                )
+            }
         } else {
             poster.foregroundClick(
                 x: point.x, y: point.y,

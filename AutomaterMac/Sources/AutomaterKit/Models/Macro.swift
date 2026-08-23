@@ -104,6 +104,12 @@ public struct ClickerConfig: Sendable, Equatable {
         case currentCursor, fixedPoint, multipoint
     }
 
+    /// How background clicks reach the target process.
+    public enum DeliveryMode: String, Sendable {
+        case events        // CGEventPostToPid + window routing
+        case accessibility // AXPress on the element under the point
+    }
+
     public var intervalMs: Int
     public var jitterMs: Int
     public var button: MouseButton
@@ -130,6 +136,7 @@ public struct ClickerConfig: Sendable, Equatable {
 
     public var multipoints: [PointSpec]
     public var backgroundToApp: Bool
+    public var deliveryMode: DeliveryMode
 
     public init(
         intervalMs: Int = 100,
@@ -148,7 +155,8 @@ public struct ClickerConfig: Sendable, Equatable {
         appName: String? = nil,
         windowTitle: String? = nil,
         multipoints: [PointSpec] = [],
-        backgroundToApp: Bool = false
+        backgroundToApp: Bool = false,
+        deliveryMode: DeliveryMode = .events
     ) {
         self.intervalMs = intervalMs
         self.jitterMs = jitterMs
@@ -167,5 +175,6 @@ public struct ClickerConfig: Sendable, Equatable {
         self.windowTitle = windowTitle
         self.multipoints = multipoints
         self.backgroundToApp = backgroundToApp
+        self.deliveryMode = deliveryMode
     }
 }
