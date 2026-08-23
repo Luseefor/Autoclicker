@@ -47,6 +47,9 @@ public enum KeyCodeMap {
             .merging(functionKeys) { a, _ in a }
             .merging(modifiers) { a, _ in a }
 
+    /// keycode → canonical name (first writer wins).
+    public static let allNames: [String: UInt16] = all
+
     /// Virtual keycode for a key name or single character; nil when unknown.
     public static func keycode(for name: String) -> UInt16? {
         let lowered = name.trimmingCharacters(in: .whitespaces).lowercased()

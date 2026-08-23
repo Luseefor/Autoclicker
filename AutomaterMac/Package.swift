@@ -14,6 +14,10 @@ let package = Package(
             name: "automater-cli",
             dependencies: ["AutomaterKit"]
         ),
+        .executableTarget(
+            name: "automater-app",
+            dependencies: ["AutomaterKit"]
+        ),
         .testTarget(
             name: "AutomaterKitTests",
             dependencies: ["AutomaterKit"]

@@ -13,6 +13,19 @@ public struct WindowInfo: Sendable, Equatable {
     public let bounds: CGRect
     public let layer: Int
 
+    public init(
+        windowId: Int, pid: pid_t, ownerName: String,
+        bundleId: String?, title: String, bounds: CGRect, layer: Int
+    ) {
+        self.windowId = windowId
+        self.pid = pid
+        self.ownerName = ownerName
+        self.bundleId = bundleId
+        self.title = title
+        self.bounds = bounds
+        self.layer = layer
+    }
+
     public var area: Double {
         max(0, bounds.width) * max(0, bounds.height)
     }
