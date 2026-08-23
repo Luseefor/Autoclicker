@@ -124,6 +124,9 @@ public struct ClickerConfig: Sendable, Equatable {
     public var appBundleId: String?
     public var appName: String?
     public var windowTitle: String?
+    /// Explicit background-target pin; wins over identity lookup when set.
+    public var targetPid: Int?
+    public var targetWindowId: Int?
 
     public var multipoints: [PointSpec]
     public var backgroundToApp: Bool
