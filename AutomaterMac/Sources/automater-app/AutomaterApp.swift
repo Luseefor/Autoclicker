@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import Combine
+import os
 import UserNotifications
 import AutomaterKit
 
@@ -16,43 +18,135 @@ struct AutomaterApp: App {
                 .environmentObject(state)
                 .frame(minWidth: 860, minHeight: 560)
         }
-        .windowStyle(.automatic)
+        .commands { commands }
+
+        Settings {
+            SettingsView()
+                .environmentObject(state)
+        }
 
         MenuBarExtra("Automater", systemImage: "cursorarrow.click.2") {
             Text(state.status)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Divider()
+            // No .keyboardShortcut here: the settings-configurable Carbon
+            // hotkeys (HotkeyManager) already fire these actions globally;
+            // hardcoded menu duplicates would shadow them.
             Button(state.isClicking ? "Stop clicker" : "Start clicker") {
                 state.toggleClicker()
             }
-            .keyboardShortcut("a", modifiers: [.control, .option])
             Button(state.recorder.recording ? "Stop recording" : "Start recording") {
                 state.toggleRecording()
             }
-            .keyboardShortcut("r", modifiers: [.control, .option])
             Button("Stop everything") { state.stopAll() }
-                .keyboardShortcut("s", modifiers: [.control, .option])
             Divider()
             Button("Quit") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
         }
     }
+
+    /// Native menu-bar commands (in-app; global Carbon hotkeys are separate).
+    @CommandsBuilder
+    private var commands: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Macro") { state.newMacro() }
+                .keyboardShortcut("n")
+        }
+        CommandGroup(after: .newItem) {
+            Button("Save Macro") { state.saveCurrentMacro() }
+                .keyboardShortcut("s")
+        }
+        CommandMenu("Controls") {
+            Button(state.isClicking ? "Stop Clicking" : "Start Clicking") {
+                state.toggleClicker()
+            }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            Button(state.recorder.recording ? "Stop Recording" : "Record") {
+                state.toggleRecording()
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+            Button("Play Current Macro") {
+                let m = state.playableMacro()
+                guard !m.steps.isEmpty else { return }
+                state.play(macro: m)
+            }
+            .keyboardShortcut("p", modifiers: [.command])
+            Divider()
+            Button("Stop Everything") { state.stopAll() }
+                .keyboardShortcut(".", modifiers: [.command])
+        }
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let log = Logger(
+        subsystem: "com.luseefor.automater", category: "hotkeys"
+    )
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         HotkeyManager.shared.installDispatcher()
+        HotkeyCoordinator.registerAll(log: Self.log)
+        installEditingDismiss()
+    }
+
+    /// Clicking anywhere outside a text field drops the caret. SwiftUI on
+    /// macOS never resigns first responder on outside clicks, so the focus
+    /// ring + blinking cursor would otherwise stick around forever.
+    private func installEditingDismiss() {
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            guard let window = event.window,
+                  let content = window.contentView,
+                  let hit = content.hitTest(event.locationInWindow) else { return event }
+            // Only act while a field editor is active, and never when the
+            // click landed inside that editor itself.
+            if window.firstResponder is NSTextView, !(hit is NSTextView) {
+                window.makeFirstResponder(nil)
+            }
+            return event
+        }
+    }
+}
+
+/// Central registry of global-hotkey bindings: reads settings, registers with
+/// Carbon, and can be re-run after a rebind (unregisters everything first).
+enum HotkeyCoordinator {
+    static let bindings: [(setting: String, fallback: String, label: String, action: Notification.Name)] = [
+        ("hotkey_toggle", "ctrl+alt+a", "toggle clicker", .automaterToggle),
+        ("hotkey_record", "ctrl+alt+r", "record", .automatorRecordToggle),
+        ("hotkey_stop", "ctrl+alt+s", "stop all", .automaterStopAll),
+        ("hotkey_grab", "ctrl+alt+g", "grab point", .automaterGrabPoint),
+    ]
+
+    static func binding(for setting: String) -> String {
         let s = Storage.loadSettings()
-        _ = HotkeyManager.shared.register(
-            s["hotkey_toggle"] as? String ?? "ctrl+alt+a"
-        ) { NotificationCenter.default.post(name: .automaterToggle, object: nil) }
-        _ = HotkeyManager.shared.register(
-            s["hotkey_record"] as? String ?? "ctrl+alt+r"
-        ) { NotificationCenter.default.post(name: .automatorRecordToggle, object: nil) }
-        _ = HotkeyManager.shared.register(
-            s["hotkey_stop"] as? String ?? "ctrl+alt+s"
-        ) { NotificationCenter.default.post(name: .automaterStopAll, object: nil) }
+        return bindings.first(where: { $0.setting == setting })
+            .map { s[$0.setting] as? String ?? $0.fallback } ?? ""
+    }
+
+    /// Persists a new binding for one hotkey and re-registers all of them.
+    static func rebind(setting: String, to binding: String) {
+        var s = Storage.loadSettings()
+        s[setting] = binding
+        Storage.saveSettings(s)
+        registerAll()
+    }
+
+    static func registerAll(log: Logger? = nil) {
+        let s = Storage.loadSettings()
+        for b in bindings {
+            let binding = s[b.setting] as? String ?? b.fallback
+            let registered = HotkeyManager.shared.register(binding) {
+                NotificationCenter.default.post(name: b.action, object: nil)
+            }
+            if !registered {
+                log?.error("hotkey '\(binding, privacy: .public)' (\(b.label, privacy: .public)) failed to register — likely in use by another app")
+                NotificationCenter.default.post(
+                    name: .automaterStatus,
+                    object: "Hotkey \(binding) (\(b.label)) failed to register"
+                )
+            }
+        }
     }
 }
 
@@ -60,9 +154,19 @@ extension Notification.Name {
     static let automaterToggle = Notification.Name("automaterToggle")
     static let automatorRecordToggle = Notification.Name("automatorRecordToggle")
     static let automaterStopAll = Notification.Name("automaterStopAll")
+    static let automaterGrabPoint = Notification.Name("automaterGrabPoint")
+    /// `object` carries a user-facing status message (String).
+    static let automaterStatus = Notification.Name("automaterStatus")
 }
 
 // MARK: - State
+
+/// One row of the Target tab's app table.
+struct RunningApp: Identifiable {
+    let app: NSRunningApplication
+    let name: String
+    var id: Int32 { app.processIdentifier }
+}
 
 @MainActor
 final class AppState: ObservableObject {
@@ -87,7 +191,7 @@ final class AppState: ObservableObject {
 
     // Target
     @Published var targetWindow: WindowInfo?
-    @Published var runningApps: [(app: NSRunningApplication, name: String)] = []
+    @Published var runningApps: [RunningApp] = []
     @Published var windowsOfTarget: [WindowInfo] = []
 
     // Macros / recorder
@@ -104,7 +208,14 @@ final class AppState: ObservableObject {
     let engine = ClickerEngine()
     let macroEngine = MacroEngine()
     let recorder = EventTapRecorder()
+    let pointPicker = PointPicker()
+    let fixedPointPicker = PointPicker()
+    let fixedPointOverlay = FixedPointOverlayController()
     private var cancellables = Set<AnyCancellable>()
+
+    @Published var isPicking = false
+    @Published var isCapturingFixedPoint = false
+    @Published var hasFixedPoint = false
 
     init() {
         loadFromSettings()
@@ -118,6 +229,56 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.status = msg }
         }
 
+        pointPicker.onPoint = { [weak self] loc in
+            Task { @MainActor in
+                guard let self else { return }
+                let spec = PointSpec(x: Int(loc.x), y: Int(loc.y),
+                                     pid: self.targetWindow.map { Int($0.pid) })
+                self.multipoints.append(spec)
+                self.status = "Picked \(self.multipoints.count): (\(Int(loc.x)), \(Int(loc.y)))"
+            }
+        }
+        pointPicker.onFinish = { [weak self] finished in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isPicking = false
+                if finished {
+                    let n = self.multipoints.count
+                    self.status = n == 0 ? "Picking ended — no points" : "\(n) point\(n == 1 ? "" : "s") picked"
+                } else {
+                    self.status = "Point picking needs Accessibility"
+                }
+            }
+        }
+
+        // Fixed point: single-shot capture + neon laser overlay tracking.
+        fixedPointPicker.singleShot = true
+        fixedPointPicker.onPoint = { [weak self] loc in
+            Task { @MainActor in
+                guard let self else { return }
+                self.fixedX = Int(loc.x)
+                self.fixedY = Int(loc.y)
+                self.hasFixedPoint = true
+                self.status = "Fixed point (\(self.fixedX), \(self.fixedY))"
+            }
+        }
+        fixedPointPicker.onFinish = { [weak self] finished in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isCapturingFixedPoint = false
+                if !finished { self.status = "Fixed-point capture needs Accessibility" }
+            }
+        }
+        Publishers.CombineLatest4($mode, $hasFixedPoint, $fixedX, $fixedY)
+            .sink { [weak self] mode, has, x, y in
+                guard let self else { return }
+                self.fixedPointOverlay.setVisible(
+                    mode == .fixedPoint && has,
+                    at: CGPoint(x: Double(x), y: Double(y))
+                )
+            }
+            .store(in: &cancellables)
+
         let center = NotificationCenter.default
         center.publisher(for: .automaterToggle)
             .sink { [weak self] _ in self?.toggleClicker() }
@@ -127,6 +288,15 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         center.publisher(for: .automaterStopAll)
             .sink { [weak self] _ in self?.stopAll() }
+            .store(in: &cancellables)
+        center.publisher(for: .automaterGrabPoint)
+            .sink { [weak self] _ in self?.handleGrabHotkey() }
+            .store(in: &cancellables)
+        center.publisher(for: .automaterStatus)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                if let msg = note.object as? String { self?.status = msg }
+            }
             .store(in: &cancellables)
     }
 
@@ -167,6 +337,18 @@ final class AppState: ObservableObject {
 
     // MARK: clicker
 
+    /// Total interval in ms — computed over the h/m/s/ms buckets that
+    /// settings persist. The Clicker UI edits this through a unit picker.
+    var intervalTotalMs: Int {
+        get { ((intervalH * 60 + intervalM) * 60 + intervalS) * 1000 + intervalMs }
+        set {
+            intervalH = newValue / 3_600_000
+            intervalM = newValue % 3_600_000 / 60_000
+            intervalS = newValue % 60_000 / 1000
+            intervalMs = newValue % 1000
+        }
+    }
+
     func buildConfig() -> ClickerConfig {
         var config = ClickerConfig()
         config.intervalMs = ((intervalH * 60 + intervalM) * 60 + intervalS) * 1000 + intervalMs
@@ -189,8 +371,14 @@ final class AppState: ObservableObject {
         return config
     }
 
+    /// Below this the engine clamps to a near-busy-loop; refuse instead.
+    static let minimumIntervalMs = 10
+
     func toggleClicker() {
         if isClicking { stopClicker(); return }
+        endPicking()
+        endFixedCapture()
+        stopRecording()
         guard AXBridge.isTrustedForAccessibility else {
             status = "Grant Accessibility first"
             AXBridge.requestAccessibilityPrompt()
@@ -200,6 +388,10 @@ final class AppState: ObservableObject {
         let config = buildConfig()
         if config.mode == .multipoint && config.multipoints.isEmpty {
             status = "Add multi-points first"
+            return
+        }
+        guard config.intervalMs >= Self.minimumIntervalMs else {
+            status = "Interval too short — minimum \(Self.minimumIntervalMs) ms"
             return
         }
         isClicking = true
@@ -220,6 +412,8 @@ final class AppState: ObservableObject {
     }
 
     func stopAll() {
+        endPicking()
+        endFixedCapture()
         stopClicker()
         stopRecording()
         Task {
@@ -232,7 +426,68 @@ final class AppState: ObservableObject {
         let loc = EventPoster.cursorLocation
         fixedX = Int(loc.x)
         fixedY = Int(loc.y)
+        hasFixedPoint = true
         status = "Fixed point (\(fixedX), \(fixedY))"
+    }
+
+    // MARK: fixed-point capture (arm, then click the real target)
+
+    /// The Grab button can't grab its own position — arming captures the
+    /// user's NEXT click anywhere instead. (Hover + ⌃⌥G also works.)
+    func toggleFixedPointCapture() {
+        if isCapturingFixedPoint {
+            fixedPointPicker.stop(finished: true)
+            return
+        }
+        guard AXBridge.isTrustedForAccessibility else {
+            status = "Grant Accessibility first"
+            AXBridge.requestAccessibilityPrompt()
+            return
+        }
+        fixedPointPicker.start()
+        isCapturingFixedPoint = fixedPointPicker.active
+        if isCapturingFixedPoint {
+            status = "Click anywhere to set the fixed point — Esc to cancel"
+        }
+    }
+
+    private func endFixedCapture() {
+        if isCapturingFixedPoint { fixedPointPicker.stop(finished: true) }
+    }
+
+    /// ⌃⌥G from anywhere: hover over a spot and press — no button click
+    /// needed (clicking the UI would move the cursor onto the button).
+    /// Contextual: feeds the Fixed Point field in that mode, otherwise
+    /// appends a multi-point.
+    func handleGrabHotkey() {
+        if mode == .fixedPoint {
+            grabFixedPoint()
+        } else {
+            addPointAtCursor()
+        }
+    }
+
+    // MARK: point picking (click-to-capture)
+
+    func togglePicking() {
+        if isPicking {
+            pointPicker.stop(finished: true)
+            return
+        }
+        guard AXBridge.isTrustedForAccessibility else {
+            status = "Grant Accessibility first"
+            AXBridge.requestAccessibilityPrompt()
+            return
+        }
+        pointPicker.start()
+        isPicking = pointPicker.active
+        if isPicking {
+            status = "Picking points — click to add, Esc to finish"
+        }
+    }
+
+    private func endPicking() {
+        if isPicking { pointPicker.stop(finished: true) }
     }
 
     func addPointAtCursor() {
@@ -274,7 +529,7 @@ final class AppState: ObservableObject {
             .filter { $0.activationPolicy == .regular && !$0.isTerminated }
             .compactMap { app in
                 guard let name = app.localizedName else { return nil }
-                return (app, name)
+                return RunningApp(app: app, name: name)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -282,11 +537,18 @@ final class AppState: ObservableObject {
     func select(app: NSRunningApplication) {
         let wins = WindowScanner.windows(pid: app.processIdentifier)
         windowsOfTarget = wins
-        setTarget(wins.first ?? WindowInfo(
-            windowId: -1, pid: app.processIdentifier,
-            ownerName: app.localizedName ?? "", bundleId: app.bundleIdentifier,
-            title: "", bounds: .zero, layer: 0
-        ))
+        if let first = wins.first {
+            setTarget(first)
+        } else {
+            // No scannable windows: keep an app-level pseudo-target
+            // (windowId -1 matches no real window) so background delivery can
+            // still resolve the app by name/bundle/pid via the fallback chain.
+            setTarget(WindowInfo(
+                windowId: -1, pid: app.processIdentifier,
+                ownerName: app.localizedName ?? "", bundleId: app.bundleIdentifier,
+                title: "", bounds: .zero, layer: 0
+            ))
+        }
     }
 
     func setTarget(_ w: WindowInfo) {
@@ -324,9 +586,12 @@ final class AppState: ObservableObject {
     func saveCurrentMacro() {
         currentMacro.steps = currentMacro.id.isEmpty
             ? recordedSteps : (recordedSteps.isEmpty ? currentMacro.steps : recordedSteps)
-        Storage.saveMacro(currentMacro)
-        refreshMacros()
-        status = "Saved “\(currentMacro.name)”"
+        if Storage.saveMacro(currentMacro) {
+            refreshMacros()
+            status = "Saved “\(currentMacro.name)”"
+        } else {
+            status = "Failed to save “\(currentMacro.name)” — see logs"
+        }
     }
 
     func newMacro() {
@@ -360,49 +625,3 @@ final class AppState: ObservableObject {
     }
 }
 
-import Combine
-
-// MARK: - Root view
-
-struct MainView: View {
-    @EnvironmentObject var state: AppState
-    @State private var tab = 0
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Automater").font(.title2).bold()
-                Text("v0.1.0-swift").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(text: state.status,
-                           active: state.isClicking || state.isRecording || state.playingMacro)
-                if state.isClicking || state.isRecording || state.playingMacro {
-                    Button("Stop all") { state.stopAll() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                }
-            }
-            .padding([.horizontal, .top])
-
-            TabView(selection: $tab) {
-                ClickerView().tabItem { Label("Clicker", systemImage: "cursorarrow.click") }.tag(0)
-                TargetPickerView().tabItem { Label("Target", systemImage: "scope") }.tag(1)
-                MacrosView().tabItem { Label("Macros", systemImage: "list.bullet.rectangle") }.tag(2)
-                SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
-            }
-            .padding()
-        }
-    }
-}
-
-struct StatusPill: View {
-    let text: String
-    let active: Bool
-    var body: some View {
-        Text(text)
-            .font(.caption)
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(active ? Color.green.opacity(0.18) : Color.gray.opacity(0.15))
-            .clipShape(Capsule())
-    }
-}

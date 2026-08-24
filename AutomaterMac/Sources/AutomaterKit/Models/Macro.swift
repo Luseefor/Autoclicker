@@ -1,7 +1,7 @@
 import Foundation
 
 /// A saved macro: ordered steps plus playback defaults.
-public struct Macro: Codable, Equatable, Sendable {
+public struct Macro: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
     public var steps: [MacroStep]
