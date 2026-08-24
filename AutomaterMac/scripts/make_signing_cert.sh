@@ -40,7 +40,10 @@ echo "→ importing into login keychain…"
 # macOS security chokes on modern p12 encryption; import PEM directly.
 security import "$WORK/key.pem" \
   -k "$HOME/Library/Keychains/login.keychain-db" \
-  -P "" -T /usr/bin/codesign
+  -P "" -A
+# -A (allow any app) instead of -T codesign: without a partition-list entry,
+# codesign would prompt for the key on EVERY build. For a local self-signed
+# dev certificate this trade-off is fine.
 security import "$WORK/cert.pem" \
   -k "$HOME/Library/Keychains/login.keychain-db"
 
