@@ -691,10 +691,15 @@ struct MacrosView: View {
                 Text("Nothing recorded. Press Record or add a click below.")
                     .foregroundStyle(.secondary)
             } else {
-                List(Array(state.displaySteps.enumerated()), id: \.offset) { _, s in
+                List(Array(state.displaySteps.enumerated()), id: \.offset) { i, s in
                     Text(stepLabel(s))
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
+                        .contextMenu {
+                            Button("Delete Step", role: .destructive) {
+                                state.deleteStep(at: i)
+                            }
+                        }
                 }
                 .listStyle(.plain)
                 .frame(minHeight: 160)
@@ -738,13 +743,44 @@ struct MacrosView: View {
     }
 
     private func stepLabel(_ s: MacroStep) -> String {
+        let secs = s.holdMs > 0 ? String(format: "%.1fs", Double(s.holdMs) / 1000) : nil
         switch s.type {
-        case "click": return "click (\(s.x ?? 0),\(s.y ?? 0)) \(s.button ?? "left") \(s.clickKind)"
-        case "key": return "key \(s.key ?? "?")"
-        case "type": return "type \"\((s.text ?? "").prefix(24))\""
-        case "delay": return "delay \(s.delayMs)ms"
-        default: return s.type
+        case "click":
+            return "click (\(s.x ?? 0),\(s.y ?? 0)) \(s.button ?? "left") \(s.clickKind)"
+        case "hold":
+            return "hold (\(s.x ?? 0),\(s.y ?? 0)) \(s.button ?? "left") \(secs ?? "")"
+        case "drag":
+            return "drag (\(s.x ?? 0),\(s.y ?? 0)) → (\(s.endX ?? 0),\(s.endY ?? 0)) \(s.button ?? "left")"
+        case "key":
+            return "key \(s.key ?? "?")" + (secs.map { " · hold \($0)" } ?? "")
+        case "type":
+            return "type \"\((s.text ?? "").prefix(24))\""
+        case "delay":
+            return "delay \(s.delayMs)ms"
+        case "scroll":
+            let amount = secs ?? "\(s.dy ?? 0) lines"
+            return "scroll \(scrollArrow(s)) \(amount)"
+        case "swipe":
+            return "swipe \(swipeArrow(s))"
+        default:
+            return s.type
         }
+    }
+
+    private func scrollArrow(_ s: MacroStep) -> String {
+        if (s.dy ?? 0) < 0 { return "↑" }
+        if (s.dy ?? 0) > 0 { return "↓" }
+        if (s.dx ?? 0) < 0 { return "←" }
+        if (s.dx ?? 0) > 0 { return "→" }
+        return "·"
+    }
+
+    private func swipeArrow(_ s: MacroStep) -> String {
+        if (s.dx ?? 0) < 0 { return "← (previous Space)" }
+        if (s.dx ?? 0) > 0 { return "→ (next Space)" }
+        if (s.dy ?? 0) < 0 { return "↑ (Mission Control)" }
+        if (s.dy ?? 0) > 0 { return "↓ (App Exposé)" }
+        return "·"
     }
 }
 
@@ -763,6 +799,18 @@ extension AppState {
         let loc = EventPoster.cursorLocation
         recordedSteps.append(MacroStep(type: "click", x: Int(loc.x), y: Int(loc.y)))
         recorder.onSteps?(recordedSteps)
+    }
+
+    /// Removes one step from whichever source the list is showing
+    /// (live recording or the saved macro) — other steps stay intact.
+    func deleteStep(at index: Int) {
+        if useRecordedForPlay && !recordedSteps.isEmpty {
+            guard recordedSteps.indices.contains(index) else { return }
+            recordedSteps.remove(at: index)
+        } else {
+            guard currentMacro.steps.indices.contains(index) else { return }
+            currentMacro.steps.remove(at: index)
+        }
     }
 
     func playableMacro() -> Macro {
