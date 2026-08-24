@@ -246,8 +246,13 @@ struct ClickerView: View {
                                   systemImage: state.isCapturingFixedPoint
                                   ? "scope" : "cursorarrow.click")
                         }
-                        .tint(state.isCapturingFixedPoint ? .red : .accentColor)
-                        .help("Arm this and click the real target point — or hover + ⌃⌥G. A laser marker shows the spot.")
+                            .tint(state.isCapturingFixedPoint ? .red : .accentColor)
+                            .help("Arm this and click the real target point — or hover + ⌃⌥G. A laser marker shows the spot.")
+                            Button("Clear", role: .destructive) {
+                                state.clearFixedPoint()
+                            }
+                            .disabled(!state.hasFixedPoint)
+                            .help("Hide the laser marker")
                     }
                     Spacer()
                 }
@@ -386,22 +391,37 @@ struct TargetPickerView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            currentTargetBanner
-            HSplitView {
-                appPane
-                    .padding(12)
-                    .frame(minWidth: 280, idealWidth: 330)
-                windowPane
-                    .padding(12)
-                    .frame(minWidth: 320, idealWidth: 420)
+        GeometryReader { geo in
+            // Below ~700pt of detail width the two panes stop fitting
+            // side-by-side — stack them instead of clipping.
+            let compact = geo.size.width < 700
+            VStack(alignment: .leading, spacing: 12) {
+                currentTargetBanner
+                if compact {
+                    appPane
+                        .padding(.horizontal, 12)
+                        .frame(height: 240)
+                    Divider()
+                    windowPane
+                        .padding(.horizontal, 12)
+                } else {
+                    HSplitView {
+                        appPane
+                            .padding(12)
+                            .frame(minWidth: 280, idealWidth: 330)
+                            .layoutPriority(1)
+                        windowPane
+                            .padding(12)
+                            .frame(minWidth: 300, idealWidth: 420)
+                    }
+                }
+                Text("Click an app, then one of its windows. The ◎ mark shows the active target — background clicks are delivered there without touching your pointer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
             }
-            Text("Click an app, then one of its windows. The ◎ mark shows the active target — background clicks are delivered there without touching your pointer.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
         }
     }
 
