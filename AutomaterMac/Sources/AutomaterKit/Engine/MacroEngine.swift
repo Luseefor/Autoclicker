@@ -78,14 +78,10 @@ public actor MacroEngine {
             poster.moveCursor(x: p.x, y: p.y)
 
         case "scroll":
-            // Mirror the Python engine: optionally move to the step position,
-            // then post a two-axis line-unit scroll (dx horizontal, dy vertical).
-            if step.x != nil || step.coordSpace == "window" {
-                if let p = resolvePoint(step, macro: macro) {
-                    poster.moveCursor(x: p.x, y: p.y)
-                }
-            }
-            poster.scroll(dx: step.dx ?? 0, dy: step.dy ?? 0)
+            await scrollStep(step, macro: macro)
+
+        case "swipe":
+            swipe(step, macro: macro)
 
         case "key", "key_down", "key_up":
             key(step, bg: bg, macro: macro, mode: mode)
@@ -160,6 +156,48 @@ public actor MacroEngine {
         } else {
             poster.foregroundClick(x: p.x, y: p.y, button: button, kind: kind)
         }
+    }
+
+    /// Scroll: a step with hold_ms replays as continuous scrolling for that
+    /// duration (recorder coalesces bursts); without, a single tick.
+    private func scrollStep(_ step: MacroStep, macro: Macro) async {
+        // Mirror the Python engine: optionally move to the step position first.
+        if step.x != nil || step.coordSpace == "window" {
+            if let p = resolvePoint(step, macro: macro) {
+                poster.moveCursor(x: p.x, y: p.y)
+            }
+        }
+        let dx = step.dx ?? 0
+        let dy = step.dy ?? 0
+        guard dx != 0 || dy != 0 else { return }
+
+        let duration = Double(max(0, step.holdMs)) / 1000.0 / max(0.05, macro.speed)
+        guard duration > 0.05 else {
+            poster.scroll(dx: dx, dy: dy)
+            return
+        }
+        let tick: Double = 0.06
+        var elapsed: Double = 0
+        while elapsed < duration {
+            poster.scroll(dx: dx, dy: dy)
+            do { try await Task.sleep(nanoseconds: UInt64(tick * 1_000_000_000)) }
+            catch { break }
+            elapsed += tick
+        }
+    }
+
+    /// Recorded three-finger swipes replay as their keyboard equivalents
+    /// (System Settings' default mappings): left/right switch Spaces,
+    /// up = Mission Control, down = App Exposé.
+    private func swipe(_ step: MacroStep, macro: Macro) {
+        let combo: String
+        if (step.dx ?? 0) < 0 { combo = "ctrl+left" }
+        else if (step.dx ?? 0) > 0 { combo = "ctrl+right" }
+        else if (step.dy ?? 0) < 0 { combo = "ctrl+up" }
+        else if (step.dy ?? 0) > 0 { combo = "ctrl+down" }
+        else { return }
+        key(MacroStep(type: "key", key: combo), bg: false, macro: macro,
+            mode: .accessibility)
     }
 
     private static func downEvent(for button: MouseButton) -> CGEventType {
@@ -266,15 +304,21 @@ public actor MacroEngine {
             } else { tail = part }
         }
         guard let tail else { return }
+        // Recorded holds (key pressed ≥250ms) replay as press → wait → release.
+        let holdSeconds = step.holdMs > 0
+            ? Double(step.holdMs) / 1000.0 / max(0.05, macro.speed)
+            : 0
         pressChord(mods: mods, tail: tail,
                    downOnly: step.type == "key_down",
-                   upOnly: step.type == "key_up")
+                   upOnly: step.type == "key_up",
+                   holdSeconds: holdSeconds)
     }
 
     private static let modifierNames: Set<String> = ["cmd", "ctrl", "alt", "shift"]
 
     private func pressChord(mods: [String], tail: String,
-                            downOnly: Bool, upOnly: Bool) {
+                            downOnly: Bool, upOnly: Bool,
+                            holdSeconds: Double = 0) {
         let src = CGEventSource(stateID: .combinedSessionState)
         var flags: CGEventFlags = []
         let codes = mods.compactMap { KeyCodeMap.keycode(for: $0) }
@@ -287,6 +331,9 @@ public actor MacroEngine {
             e.post(tap: .cghidEventTap)
         }
         if !upOnly { for c in codes { post(c, true) } ; post(tailCode, true) }
+        if holdSeconds > 0 {
+            Thread.sleep(forTimeInterval: holdSeconds)
+        }
         if !downOnly {
             post(tailCode, false)
             for c in codes.reversed() { post(c, false) }
