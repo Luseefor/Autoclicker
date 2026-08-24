@@ -455,6 +455,13 @@ final class AppState: ObservableObject {
         if isCapturingFixedPoint { fixedPointPicker.stop(finished: true) }
     }
 
+    /// Hides the laser marker (overlay clears via the mode/point sink).
+    func clearFixedPoint() {
+        endFixedCapture()
+        hasFixedPoint = false
+        status = "Fixed point cleared"
+    }
+
     /// ⌃⌥G from anywhere: hover over a spot and press — no button click
     /// needed (clicking the UI would move the cursor onto the button).
     /// Contextual: feeds the Fixed Point field in that mode, otherwise
