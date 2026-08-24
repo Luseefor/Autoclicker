@@ -2,7 +2,8 @@ import CoreGraphics
 import AppKit
 
 /// A real content window discovered via the CG window list.
-public struct WindowInfo: Sendable, Equatable {
+public struct WindowInfo: Sendable, Equatable, Identifiable {
+    public var id: Int { windowId }
     public let windowId: Int
     public let pid: pid_t
     public let ownerName: String
@@ -12,10 +13,15 @@ public struct WindowInfo: Sendable, Equatable {
     /// Global coordinates, top-left origin.
     public let bounds: CGRect
     public let layer: Int
+    /// Currently composited somewhere (its own Space, visible or covered).
+    /// False for minimized-to-Dock windows — background clicks cannot reach
+    /// those until they're restored onto some Space.
+    public let isOnScreen: Bool
 
     public init(
         windowId: Int, pid: pid_t, ownerName: String,
-        bundleId: String?, title: String, bounds: CGRect, layer: Int
+        bundleId: String?, title: String, bounds: CGRect, layer: Int,
+        isOnScreen: Bool = true
     ) {
         self.windowId = windowId
         self.pid = pid
@@ -24,6 +30,7 @@ public struct WindowInfo: Sendable, Equatable {
         self.title = title
         self.bounds = bounds
         self.layer = layer
+        self.isOnScreen = isOnScreen
     }
 
     public var area: Double {
@@ -80,6 +87,7 @@ public enum WindowScanner {
             }
 
             seen.insert(id)
+            let isOnScreen = (w[kCGWindowIsOnscreen as String] as? Bool) ?? false
             out.append(
                 WindowInfo(
                     windowId: id,
@@ -88,7 +96,8 @@ public enum WindowScanner {
                     bundleId: bundleIdForPID(pid_t(pid)),
                     title: (w[kCGWindowName as String] as? String) ?? "",
                     bounds: CGRect(x: bx, y: by, width: bw, height: bh),
-                    layer: layer
+                    layer: layer,
+                    isOnScreen: isOnScreen
                 )
             )
         }
@@ -165,5 +174,26 @@ public enum WindowScanner {
     /// True when the given pid belongs to this process tree.
     public static func isOwnProcess(_ pid: pid_t) -> Bool {
         pid == getpid() || bundleIdForPID(pid) == Bundle.main.bundleIdentifier
+    }
+
+    /// True when a global CG point (top-left origin) lands on this process's
+    /// **topmost** window. Z-order aware: another app's window overlapping our
+    /// frame owns the click when it sits in front — capture taps must count
+    /// those, not swallow them as "our UI".
+    public static func ownsPoint(cgLocation: CGPoint) -> Bool {
+        guard let raw = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+        for w in raw {   // listed front-to-back
+            if (w[kCGWindowLayer as String] as? Int) ?? 0 != 0 { continue }
+            guard let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = b["X"], let y = b["Y"],
+                  let width = b["Width"], let height = b["Height"] else { continue }
+            if CGRect(x: x, y: y, width: width, height: height).contains(cgLocation) {
+                let pid = (w[kCGWindowOwnerPID as String] as? Int) ?? 0
+                return pid == getpid()
+            }
+        }
+        return false
     }
 }
