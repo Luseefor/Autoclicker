@@ -17,6 +17,8 @@ public final class EventTapRecorder {
     private var pressButton: MouseButton = .left
     private var pressTime: TimeInterval = 0
     private var dragMoved = false
+    // relative-delay capture (mirrors the Python recorder's _elapsed_ms)
+    private var lastEventTime: TimeInterval?
     // keyboard chord state
     private var heldMods: Set<String> = []
     private var comboPending: String?
@@ -39,6 +41,7 @@ public final class EventTapRecorder {
     public func start() {
         guard tap == nil else { return }
         clear()
+        lastEventTime = nil
         func maskBit(_ t: CGEventType) -> UInt64 { 1 << t.rawValue }
         let mask: CGEventMask =
             maskBit(.leftMouseDown) | maskBit(.leftMouseUp)
@@ -48,7 +51,8 @@ public final class EventTapRecorder {
             | maskBit(.keyDown) | maskBit(.keyUp)
 
         let callback: CGEventTapCallBack = { _, type, event, refcon in
-            Unmanaged<EventTapRecorder>.fromOpaque(refcon!).takeUnretainedValue()
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            Unmanaged<EventTapRecorder>.fromOpaque(refcon).takeUnretainedValue()
                 .handle(type: type, event: event)
             return Unmanaged.passUnretained(event)
         }
@@ -84,6 +88,16 @@ public final class EventTapRecorder {
     // MARK: - Event handling
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
+        // Never record interactions with our own UI (Stop button, name
+        // fields, etc.) — mirrors the Python recorder's ignore_pids.
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown,
+             .scrollWheel, .keyDown, .keyUp:
+            if WindowScanner.ownsPoint(cgLocation: event.location) { return }
+        default:
+            break
+        }
+
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             pressPos = event.location
@@ -101,12 +115,14 @@ public final class EventTapRecorder {
             handleMouseUp(at: event.location, upType: type)
 
         case .scrollWheel:
+            let now = Date().timeIntervalSince1970
             append(MacroStep(
                 type: "scroll",
                 x: Int(event.location.x), y: Int(event.location.y),
-                // Axis1 = vertical (11), Axis2 = horizontal (12)
-                dx: Int(event.getIntegerValueField(CGEventField(rawValue: 12)!)),
-                dy: Int(event.getIntegerValueField(CGEventField(rawValue: 11)!))
+                delayMs: takeDelayMs(now: now),
+                // Axis1 = vertical (dy), Axis2 = horizontal (dx)
+                dx: Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis2)),
+                dy: Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
             ))
 
         case .keyDown, .keyUp:
@@ -134,7 +150,7 @@ public final class EventTapRecorder {
 
         if type == .keyDown {
             if let m = modName { heldMods.insert(m); return }
-            let delay = 0
+            let delay = takeDelayMs(now: Date().timeIntervalSince1970)
             if !heldMods.isEmpty {
                 let order = ["ctrl", "alt", "shift", "cmd"]
                 let combo = (order.filter { heldMods.contains($0) } + [name]).joined(separator: "+")
@@ -159,6 +175,21 @@ public final class EventTapRecorder {
 
     private let lock = NSRecursiveLock()
 
+    /// Gap attributed to a new step: wall-clock ms since the previous event,
+    /// clamped so an accidental pause while recording can't stall replays.
+    static let maxStepDelayMs = 5_000
+
+    static func stepDelay(gapMs: Int?) -> Int {
+        guard let gapMs, gapMs > 0 else { return 0 }
+        return min(gapMs, maxStepDelayMs)
+    }
+
+    private func takeDelayMs(now: TimeInterval) -> Int {
+        let gapMs = lastEventTime.map { Int((now - $0) * 1000) }
+        lastEventTime = now
+        return Self.stepDelay(gapMs: gapMs)
+    }
+
     private func append(_ step: MacroStep) {
         lock.lock(); defer { lock.unlock() }
         appendLocked(step)
@@ -179,23 +210,25 @@ public final class EventTapRecorder {
         guard let start = pressPos else { return }
         let now = Date().timeIntervalSince1970
         let holdMs = Int((now - pressTime) * 1000)
+        let delay = takeDelayMs(now: now)
         let btn = pressButton.rawValue
 
         if dragMoved || abs(loc.x - start.x) > 8 || abs(loc.y - start.y) > 8 {
             append(MacroStep(
                 type: "drag",
                 x: Int(start.x), y: Int(start.y), button: btn,
+                delayMs: delay,
                 endX: Int(loc.x), endY: Int(loc.y)
             ))
         } else if holdMs >= 400 {
             append(MacroStep(
                 type: "hold", x: Int(start.x), y: Int(start.y),
-                button: btn, holdMs: holdMs
+                button: btn, delayMs: delay, holdMs: holdMs
             ))
         } else {
             append(MacroStep(
                 type: "click", x: Int(start.x), y: Int(start.y),
-                button: btn, clickKind: "single"
+                button: btn, delayMs: delay, clickKind: "single"
             ))
         }
         pressPos = nil
