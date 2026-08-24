@@ -10,6 +10,39 @@ public struct EventPoster: Sendable {
 
     // MARK: - Mouse
 
+    /// Posts a two-axis scroll in line units (schema dx = horizontal,
+    /// dy = vertical, matching the Python engine's `_scroll`).
+    public func scroll(
+        dx: Int,
+        dy: Int,
+        pid: pid_t? = nil,
+        windowNumber: Int? = nil
+    ) {
+        guard dx != 0 || dy != 0 else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let event = CGEvent(
+            scrollWheelEvent2Source: source,
+            units: .line,
+            wheelCount: 2,
+            wheel1: Int32(clamping: dy),
+            wheel2: Int32(clamping: dx),
+            wheel3: 0
+        ) else { return }
+        if let windowNumber {
+            event.setIntegerValueField(
+                .windowUnderMousePointer, value: Int64(windowNumber)
+            )
+            event.setIntegerValueField(
+                .windowUnderMousePointerHandler, value: Int64(windowNumber)
+            )
+        }
+        if let pid {
+            event.postToPid(pid)
+        } else {
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
     public func postMouseEvent(
         _ type: CGEventType,
         x: Double,
@@ -19,13 +52,14 @@ public struct EventPoster: Sendable {
         clickState: Int = 1,
         windowNumber: Int? = nil
     ) {
-        let cgButton = CGMouseButton(rawValue: UInt32(button.rawValue == "left" ? 0 : button.rawValue == "right" ? 1 : 2))!
-        let source = CGEventSource(stateID: CGEventSourceStateID(rawValue: pid != nil ? -1 : 1)!)
+        let source = CGEventSource(
+            stateID: pid != nil ? .privateState : .combinedSessionState
+        )
         guard let event = CGEvent(
             mouseEventSource: source,
             mouseType: type,
             mouseCursorPosition: CGPoint(x: x, y: y),
-            mouseButton: cgButton
+            mouseButton: button.cgButton
         ) else { return }
 
         event.location = CGPoint(x: x, y: y)
@@ -126,18 +160,24 @@ public struct EventPoster: Sendable {
     }
 
     /// AXPress-based background click: no synthetic events at all.
+    /// Returns true when at least one press actually landed on an element.
+    @discardableResult
     public func axClick(
         x: Double, y: Double,
         pid: pid_t,
         button: MouseButton = .left,
         kind: ClickKind = .single
-    ) {
+    ) -> Bool {
+        var delivered = false
         for _ in 0..<kind.presses {
-            AXBridge.pressAt(appPID: pid, x: x, y: y)
+            if AXBridge.pressAt(appPID: pid, x: x, y: y) {
+                delivered = true
+            }
             if kind.presses > 1 {
                 Thread.sleep(forTimeInterval: 0.05)
             }
         }
+        return delivered
     }
 
     // MARK: - Keyboard
@@ -170,7 +210,7 @@ public struct EventPoster: Sendable {
             acc.insert(Self.flag(forVirtual: code))
         }
 
-        let source = CGEventSource(stateID: CGEventSourceStateID(rawValue: -1)!)
+        let source = CGEventSource(stateID: .combinedSessionState)
 
         func post(_ keycode: UInt16, _ down: Bool) {
             guard let event = CGEvent(
@@ -204,5 +244,16 @@ public struct EventPoster: Sendable {
 
     public static var cursorLocation: CGPoint {
         CGEvent(source: nil)?.location ?? .zero
+    }
+}
+
+extension MouseButton {
+    /// CG counterpart for synthetic event construction.
+    var cgButton: CGMouseButton {
+        switch self {
+        case .left: return .left
+        case .right: return .right
+        case .middle: return .center
+        }
     }
 }

@@ -68,19 +68,24 @@ public actor MacroEngine {
             click(p, step: step, macro: macro, bg: bg, mode: mode)
 
         case "hold":
-            hold(step, macro: macro)
+            await hold(step, macro: macro, bg: bg)
 
         case "drag":
-            drag(step, macro: macro, bg: bg, mode: mode)
+            await drag(step, macro: macro, bg: bg)
 
         case "move":
             guard let p = resolvePoint(step, macro: macro) else { return }
             poster.moveCursor(x: p.x, y: p.y)
 
         case "scroll":
-            poster.postMouseEvent(.scrollWheel, x: CGFloat(step.x ?? 0),
-                                  y: CGFloat(step.y ?? 0),
-                                  button: .left, pid: nil, clickState: 0)
+            // Mirror the Python engine: optionally move to the step position,
+            // then post a two-axis line-unit scroll (dx horizontal, dy vertical).
+            if step.x != nil || step.coordSpace == "window" {
+                if let p = resolvePoint(step, macro: macro) {
+                    poster.moveCursor(x: p.x, y: p.y)
+                }
+            }
+            poster.scroll(dx: step.dx ?? 0, dy: step.dy ?? 0)
 
         case "key", "key_down", "key_up":
             key(step, bg: bg, macro: macro, mode: mode)
@@ -157,19 +162,43 @@ public actor MacroEngine {
         }
     }
 
-    private func hold(_ step: MacroStep, macro: Macro) {
-        guard let p = resolvePoint(step, macro: macro) else { return }
-        let button = MouseButton(rawValue: step.button ?? "left") ?? .left
-        let downType: CGEventType = button == .right ? .rightMouseDown :
-            button == .middle ? .otherMouseDown : .leftMouseDown
-        let upType: CGEventType = button == .right ? .rightMouseUp :
-            button == .middle ? .otherMouseUp : .leftMouseUp
-        poster.postMouseEvent(downType, x: p.x, y: p.y, button: button, clickState: 1)
-        Thread.sleep(forTimeInterval: Double(step.holdMs) / 1000.0)
-        poster.postMouseEvent(upType, x: p.x, y: p.y, button: button, clickState: 1)
+    private static func downEvent(for button: MouseButton) -> CGEventType {
+        switch button {
+        case .right: return .rightMouseDown
+        case .middle: return .otherMouseDown
+        case .left: return .leftMouseDown
+        }
     }
 
-    private func drag(_ step: MacroStep, macro: Macro, bg: Bool, mode: ClickerConfig.DeliveryMode) {
+    private static func upEvent(for button: MouseButton) -> CGEventType {
+        switch button {
+        case .right: return .rightMouseUp
+        case .middle: return .otherMouseUp
+        case .left: return .leftMouseUp
+        }
+    }
+
+    private func hold(_ step: MacroStep, macro: Macro, bg: Bool) async {
+        guard let p = resolvePoint(step, macro: macro) else { return }
+        let button = MouseButton(rawValue: step.button ?? "left") ?? .left
+        let target = bg ? bgTarget(step, macro) : ResolvedTarget.none
+
+        func deliver(_ type: CGEventType) {
+            poster.postMouseEvent(type, x: p.x, y: p.y, button: button,
+                                  pid: target.pid,
+                                  windowNumber: target.windowNumber)
+        }
+
+        deliver(Self.downEvent(for: button))
+        // Hold duration scales with playback speed like every other delay.
+        let secs = Double(max(0, step.holdMs)) / 1000.0 / max(0.05, macro.speed)
+        do { try await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000)) } catch {}
+        deliver(Self.upEvent(for: button))
+    }
+
+    /// AXPress cannot express press-and-move, so background drags always use
+    /// pid-routed synthetic events (same choice as the Python engine).
+    private func drag(_ step: MacroStep, macro: Macro, bg: Bool) async {
         guard let start = resolvePoint(step, macro: macro) else { return }
         let end: CGPoint?
         if step.coordSpace == "window" {
@@ -184,16 +213,40 @@ public actor MacroEngine {
         }
         guard let end else { return }
         let button = MouseButton(rawValue: step.button ?? "left") ?? .left
-        poster.warpCursor(x: start.x, y: start.y)
-        poster.postMouseEvent(.leftMouseDown, x: start.x, y: start.y, button: button, clickState: 1)
-        let steps = 20
-        for i in 1...steps {
-            let t = Double(i) / Double(steps)
-            poster.moveCursor(x: start.x + (end.x - start.x) * t,
-                              y: start.y + (end.y - start.y) * t)
-            Thread.sleep(forTimeInterval: 0.01)
+        let target = bg ? bgTarget(step, macro) : ResolvedTarget.none
+
+        func deliver(_ type: CGEventType, _ x: Double, _ y: Double, clickState: Int) {
+            poster.postMouseEvent(type, x: x, y: y, button: button,
+                                  pid: target.pid, clickState: clickState,
+                                  windowNumber: target.windowNumber)
         }
-        poster.postMouseEvent(.leftMouseUp, x: end.x, y: end.y, button: button, clickState: 1)
+
+        if target.pid == nil {
+            poster.warpCursor(x: start.x, y: start.y)
+            poster.moveCursor(x: start.x, y: start.y)
+        }
+        deliver(Self.downEvent(for: button), start.x, start.y, clickState: 1)
+
+        // Interpolation density scales inversely with speed at a fixed 10ms
+        // cadence (matches the Python engine's max(5, int(20 / speed))).
+        let stepCount = Self.interpolationSteps(speed: macro.speed)
+        do {
+            for i in 1...stepCount {
+                let t = Double(i) / Double(stepCount)
+                let x = start.x + (end.x - start.x) * t
+                let y = start.y + (end.y - start.y) * t
+                deliver(.mouseMoved, x, y, clickState: 0)
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+        } catch {
+            // Cancelled mid-drag — the release below still runs so the
+            // button never sticks down.
+        }
+        deliver(Self.upEvent(for: button), end.x, end.y, clickState: 1)
+    }
+
+    static func interpolationSteps(speed: Double) -> Int {
+        max(5, Int((20.0 / max(0.05, speed)).rounded(.down)))
     }
 
     private func key(_ step: MacroStep, bg: Bool, macro: Macro, mode: ClickerConfig.DeliveryMode) {
@@ -204,27 +257,25 @@ public actor MacroEngine {
         // Global fallback via chord presses.
         let parts = combo.split(separator: "+").map(String.init)
         guard !parts.isEmpty else { return }
-        var modKeys: [Any] = []
+        var mods: [String] = []
         var tail: String?
         for part in parts {
             let lowered = part.lowercased()
-            if ["cmd", "ctrl", "alt", "shift"].contains(lowered) {
-                modKeys.append(lowered)
+            if Self.modifierNames.contains(lowered) {
+                mods.append(lowered)
             } else { tail = part }
         }
         guard let tail else { return }
-        pressChord(mods: modKeys.compactMap { $0 as? String }, tail: tail,
+        pressChord(mods: mods, tail: tail,
                    downOnly: step.type == "key_down",
                    upOnly: step.type == "key_up")
     }
 
+    private static let modifierNames: Set<String> = ["cmd", "ctrl", "alt", "shift"]
+
     private func pressChord(mods: [String], tail: String,
                             downOnly: Bool, upOnly: Bool) {
-        let src = CGEventSource(stateID: CGEventSourceStateID(rawValue: -1)!)
-        let flagMap: [String: CGEventFlags] = [
-            "cmd": .maskCommand, "ctrl": .maskControl,
-            "alt": .maskAlternate, "shift": .maskShift,
-        ]
+        let src = CGEventSource(stateID: .combinedSessionState)
         var flags: CGEventFlags = []
         let codes = mods.compactMap { KeyCodeMap.keycode(for: $0) }
         for c in codes { flags.insert(Self.flag(forVirtual: c)) }
@@ -254,7 +305,7 @@ public actor MacroEngine {
 
     /// Unicode typing via event string payload (covers any character).
     private func typeText(_ text: String) {
-        let src = CGEventSource(stateID: CGEventSourceStateID(rawValue: -1)!)
+        let src = CGEventSource(stateID: .combinedSessionState)
         for ch in text {
             guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { continue }

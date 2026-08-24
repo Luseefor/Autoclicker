@@ -56,6 +56,23 @@ public enum KeyCodeMap {
         return all[lowered]
     }
 
+    private static let namesByKeycode: [UInt16: String] = {
+        var reverse: [UInt16: String] = [:]
+        for (name, code) in all {
+            if let existing = reverse[code] {
+                if name.count < existing.count { reverse[code] = name }
+            } else {
+                reverse[code] = name
+            }
+        }
+        return reverse
+    }()
+
+    /// Canonical name for a virtual keycode; nil when unknown.
+    public static func name(for keycode: UInt16) -> String? {
+        namesByKeycode[keycode]
+    }
+
     public static func isModifier(name: String) -> Bool {
         modifiers[name.trimmingCharacters(in: .whitespaces).lowercased()] != nil
     }

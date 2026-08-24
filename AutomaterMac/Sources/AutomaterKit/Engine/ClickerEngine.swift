@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import os
 
 /// Outcome of resolving a background delivery destination.
 public struct ResolvedTarget: Sendable, Equatable {
@@ -12,6 +13,10 @@ public struct ResolvedTarget: Sendable, Equatable {
 /// Background clicker worker: current-cursor, fixed-point, and multi-point
 /// modes with true pointer-free background delivery.
 public actor ClickerEngine {
+
+    private static let log = Logger(
+        subsystem: "com.luseefor.automater", category: "engine"
+    )
 
     public private(set) var isRunning = false
     public private(set) var clicksPerformed = 0
@@ -66,6 +71,15 @@ public actor ClickerEngine {
         var done = 0
         var pointIndex = 0
         var didWarmUp = false
+        // AXPress misses are common while a target window is mid-layout;
+        // report the first one only so status isn't spammed every interval.
+        var reportedMiss = false
+        func onMiss() {
+            if !reportedMiss {
+                reportedMiss = true
+                onStatus("Background click missed — no pressable element at target")
+            }
+        }
 
         while !Task.isCancelled {
             if config.repeatCount > 0 && done >= config.repeatCount { break }
@@ -80,6 +94,18 @@ public actor ClickerEngine {
                 case .currentCursor:
                     let loc = EventPoster.cursorLocation
                     resolvedPoint = CGPoint(x: loc.x, y: loc.y)
+                    if config.backgroundToApp {
+                        bgTarget = Self.resolveBackgroundTarget(
+                            pid: config.targetPid,
+                            bundleId: config.appBundleId,
+                            appName: config.appName,
+                            title: config.windowTitle,
+                            windowId: config.targetWindowId
+                        )
+                        if bgTarget.pid == nil {
+                            onStatus("Background target not found")
+                        }
+                    }
 
                 case .fixedPoint:
                     if let p = Self.resolveFixedPoint(config: config) {
@@ -148,14 +174,20 @@ public actor ClickerEngine {
                     try Task.checkCancellation()
                 }
 
-                deliver(point: point, target: bgTarget, config: config)
+                _ = deliver(point: point, target: bgTarget, config: config,
+                            onMiss: onMiss)
                 clicksPerformed += 1
                 done += 1
+            } catch is CancellationError {
+                break
             } catch {
+                Self.log.error("click loop error: \(error.localizedDescription, privacy: .public)")
+                onStatus("Clicker error: \(error.localizedDescription)")
                 break
             }
 
-            // Interval with jitter, cancellable.
+            // Interval with jitter, cancellable. Task.sleep only throws on
+            // cancellation here.
             var wait = baseInterval
             if config.jitterMs > 0 {
                 wait += Double(Int.random(in: -config.jitterMs...config.jitterMs)) / 1000.0
@@ -169,12 +201,19 @@ public actor ClickerEngine {
         }
     }
 
-    private func deliver(point: CGPoint, target: ResolvedTarget, config: ClickerConfig) {
+    /// Returns true when an AX delivery observably missed (no pressable
+    /// element). Event-based and foreground paths are fire-and-forget.
+    private func deliver(
+        point: CGPoint, target: ResolvedTarget, config: ClickerConfig,
+        onMiss: () -> Void
+    ) -> Bool {
         if config.backgroundToApp, let pid = target.pid {
             switch config.deliveryMode {
             case .accessibility:
-                poster.axClick(x: point.x, y: point.y, pid: pid,
-                               button: config.button, kind: config.clickKind)
+                let landed = poster.axClick(x: point.x, y: point.y, pid: pid,
+                                            button: config.button, kind: config.clickKind)
+                if !landed { onMiss() }
+                return !landed
             case .events:
                 let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
                 poster.backgroundClick(
@@ -185,6 +224,7 @@ public actor ClickerEngine {
                     button: config.button,
                     kind: config.clickKind
                 )
+                return false
             }
         } else {
             poster.foregroundClick(
@@ -192,6 +232,7 @@ public actor ClickerEngine {
                 button: config.button,
                 kind: config.clickKind
             )
+            return false
         }
     }
 
@@ -248,7 +289,12 @@ public actor ClickerEngine {
     ) -> ResolvedTarget {
         if let pid, pid > 0, kill(pid_t(pid), 0) == 0 {
             let wins = WindowScanner.windows(pid: pid_t(pid))
-            let winNumber = wins.first?.windowId ?? windowId
+            // Prefer the explicitly targeted window when it belongs to this
+            // pid, so event routing doesn't jump to whichever window happens
+            // to be largest.
+            let winNumber = windowId.flatMap { id in
+                wins.first(where: { $0.windowId == id })?.windowId
+            } ?? wins.first?.windowId ?? windowId
             return ResolvedTarget(pid: pid_t(pid), windowNumber: winNumber)
         }
         if let window = WindowScanner.findWindow(

@@ -1,4 +1,5 @@
 import ApplicationServices
+import AppKit
 import Foundation
 
 /// Accessibility trust checks and point→pid hit-testing.
@@ -8,11 +9,24 @@ public enum AXBridge {
         AXIsProcessTrusted()
     }
 
-    /// Triggers the system prompt; returns current trust state.
+    /// Opens System Settings → Privacy & Security → Accessibility directly.
+    /// More reliable than the legacy API prompt, which ad-hoc-signed apps
+    /// often never see.
+    @discardableResult
+    public static func openAccessibilitySettings() -> Bool {
+        guard let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ) else { return false }
+        return NSWorkspace.shared.open(url)
+    }
+
+    /// Returns current trust state and lands the user on the Accessibility
+    /// pane so they can grant immediately.
     @discardableResult
     public static func requestAccessibilityPrompt() -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        let trusted = AXIsProcessTrusted()
+        if !trusted { openAccessibilitySettings() }
+        return trusted
     }
 
     /// PIDs that should receive an event at this point: the app pid plus the
@@ -50,11 +64,16 @@ public enum AXBridge {
 
     /// True once the app's AX tree resolves any element at this point — used
     /// to detect lazily-built trees (Chromium builds one only after a query).
+    /// Falls back to frame containment for occluded/other-Space windows where
+    /// position hit-testing reports nothing.
     public static func hasElementAt(appPID: pid_t, x: CGFloat, y: CGFloat) -> Bool {
         let appElement = AXUIElementCreateApplication(appPID)
         var element: AXUIElement?
-        return AXUIElementCopyElementAtPosition(appElement, Float(x), Float(y), &element) == .success
-            && element != nil
+        if AXUIElementCopyElementAtPosition(appElement, Float(x), Float(y), &element) == .success,
+           element != nil {
+            return true
+        }
+        return windowContaining(appPID: appPID, x: x, y: y) != nil
     }
 
     /// Human-readable dump of the AX element chain at a point (debugging).
@@ -93,13 +112,52 @@ public enum AXBridge {
     /// True background click: perform the AXPress action on the element under
     /// the point (walking ancestors when the hit surface itself isn't
     /// pressable). Works regardless of window focus or event routing.
+    ///
+    /// Position hit-testing fails for occluded/other-Space windows in many
+    /// apps, so a miss falls back to walking the AX tree by frame — the tree
+    /// is queryable even when the window isn't composited on top.
     @discardableResult
     public static func pressAt(appPID: pid_t, x: CGFloat, y: CGFloat) -> Bool {
         let appElement = AXUIElementCreateApplication(appPID)
         var element: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(appElement, Float(x), Float(y), &element) == .success,
-              let start = element else { return false }
+        if AXUIElementCopyElementAtPosition(appElement, Float(x), Float(y), &element) == .success,
+           let start = element,
+           pressAncestorChain(from: start) {
+            return true
+        }
 
+        // Cached element from a previous tree-walk at (roughly) this point?
+        let cacheKey = CacheKey(pid: appPID, cx: Int(x / 8), cy: Int(y / 8))
+        cacheLock.lock()
+        let cached = elementCache[cacheKey]
+        cacheLock.unlock()
+        if let cached {
+            if pressAncestorChain(from: cached) { return true }
+            cacheLock.lock()
+            elementCache[cacheKey] = nil
+            cacheLock.unlock()
+        }
+
+        guard let found = treeWalkPressable(appPID: appPID, x: x, y: y),
+              pressAncestorChain(from: found) else { return false }
+        cacheLock.lock()
+        elementCache[cacheKey] = found
+        cacheLock.unlock()
+        return true
+    }
+
+    private struct CacheKey: Hashable {
+        let pid: pid_t
+        let cx: Int
+        let cy: Int
+    }
+
+    private static let cacheLock = NSLock()
+    private static var elementCache: [CacheKey: AXUIElement] = [:]
+
+    /// Performs AXPress on the element, walking up to 8 ancestors for the
+    /// first one that supports the action.
+    private static func pressAncestorChain(from start: AXUIElement) -> Bool {
         var current = start
         for _ in 0..<8 {
             var actions: CFArray?
@@ -113,5 +171,63 @@ public enum AXBridge {
             current = unsafeDowncast(p, to: AXUIElement.self)
         }
         return false
+    }
+
+    // MARK: occluded-window tree walk
+
+    private static func axFrame(_ el: AXUIElement) -> CGRect? {
+        var posRef: CFTypeRef?, sizeRef: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posRef) == .success,
+            let pos = posRef,
+            AXValueGetType(pos as! AXValue) == .cgPoint,
+            AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeRef) == .success,
+            let size = sizeRef,
+            AXValueGetType(size as! AXValue) == .cgSize
+        else { return nil }
+        var p = CGPoint.zero, s = CGSize.zero
+        AXValueGetValue(pos as! AXValue, .cgPoint, &p)
+        AXValueGetValue(size as! AXValue, .cgSize, &s)
+        return CGRect(origin: p, size: s)
+    }
+
+    /// Topmost AX window of the app whose frame contains the point.
+    private static func windowContaining(appPID: pid_t, x: CGFloat, y: CGFloat) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(appPID)
+        var cfWindows: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &cfWindows) == .success,
+              let windows = cfWindows as? [AXUIElement] else { return nil }
+        let point = CGPoint(x: x, y: y)
+        for window in windows.reversed() {  // last = topmost
+            if let f = axFrame(window), f.contains(point) { return window }
+        }
+        return nil
+    }
+
+    /// Depth-limited search for the deepest pressable element containing the
+    /// point, starting from a window. Later children are checked first
+    /// (they render on top).
+    private static func treeWalkPressable(appPID: pid_t, x: CGFloat, y: CGFloat) -> AXUIElement? {
+        guard let window = windowContaining(appPID: appPID, x: x, y: y) else { return nil }
+        return searchPressable(window, x: x, y: y, depth: 0)
+    }
+
+    private static func searchPressable(_ el: AXUIElement, x: CGFloat, y: CGFloat, depth: Int) -> AXUIElement? {
+        if depth > 12 { return nil }
+        guard let f = axFrame(el), f.contains(CGPoint(x: x, y: y)) else { return nil }
+
+        var kids: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &kids) == .success,
+           let children = kids as? [AXUIElement] {
+            for child in children.reversed() {
+                if let hit = searchPressable(child, x: x, y: y, depth: depth + 1) { return hit }
+            }
+        }
+        var actions: CFArray?
+        if AXUIElementCopyActionNames(el, &actions) == .success,
+           let list = actions as? [String], list.contains("AXPress") {
+            return el
+        }
+        return nil
     }
 }
