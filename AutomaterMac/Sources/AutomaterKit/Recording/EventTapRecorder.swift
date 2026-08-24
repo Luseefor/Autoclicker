@@ -3,6 +3,11 @@ import AppKit
 import Foundation
 
 /// Records mouse + keyboard into MacroSteps via a listen-only CGEventTap.
+///
+/// Smart coalescing keeps macros human-sized:
+/// - held keys collapse into ONE step carrying hold_ms (no repeat spam)
+/// - continuous scrolling collapses into ONE step carrying scroll duration
+/// - three-finger swipes record as directional "swipe" steps
 public final class EventTapRecorder {
     public private(set) var steps: [MacroStep] = []
     public var onSteps: (([MacroStep]) -> Void)?
@@ -10,7 +15,7 @@ public final class EventTapRecorder {
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var thread: Thread?
+    private var gestureMonitor: Any?
 
     // press state
     private var pressPos: CGPoint?
@@ -22,6 +27,11 @@ public final class EventTapRecorder {
     // keyboard chord state
     private var heldMods: Set<String> = []
     private var comboPending: String?
+    // open key press (for repeat-coalescing and hold duration)
+    private var keyDownInfo: (key: String, time: TimeInterval, id: Int)?
+    // open scroll burst (continuous scrolling coalesces into one step)
+    private var scrollPending: (dx: Int, dy: Int, start: TimeInterval, last: TimeInterval, id: Int)?
+    private var lastBurstNotify: TimeInterval = 0
     // key code → name reverse map
     private static let namesByKeycode: [UInt16: String] = {
         var m: [UInt16: String] = [:]
@@ -34,7 +44,11 @@ public final class EventTapRecorder {
     public init() {}
 
     public func clear() {
-        steps.removeAll()
+        withLock {
+            steps.removeAll()
+            keyDownInfo = nil
+            scrollPending = nil
+        }
         onSteps?(steps)
     }
 
@@ -70,6 +84,14 @@ public final class EventTapRecorder {
         runLoopSource = src
         CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
         CGEvent.tapEnable(tap: port, enable: true)
+
+        // Three-finger swipes (Spaces / Mission Control) don't come through
+        // the CG tap as usable events — NSEvent's global monitor does.
+        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) {
+            [weak self] event in
+            self?.handleSwipe(dx: event.deltaX, dy: event.deltaY)
+        }
+
         onStatus?("Recording…")
     }
 
@@ -82,6 +104,10 @@ public final class EventTapRecorder {
         }
         tap = nil
         runLoopSource = nil
+        if let gestureMonitor { NSEvent.removeMonitor(gestureMonitor) }
+        gestureMonitor = nil
+        keyDownInfo = nil
+        scrollPending = nil
         onStatus?("Recorded \(steps.count) steps")
     }
 
@@ -100,6 +126,7 @@ public final class EventTapRecorder {
 
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            endScrollBurst()
             pressPos = event.location
             pressButton = Self.button(for: type)
             pressTime = Date().timeIntervalSince1970
@@ -115,15 +142,7 @@ public final class EventTapRecorder {
             handleMouseUp(at: event.location, upType: type)
 
         case .scrollWheel:
-            let now = Date().timeIntervalSince1970
-            append(MacroStep(
-                type: "scroll",
-                x: Int(event.location.x), y: Int(event.location.y),
-                delayMs: takeDelayMs(now: now),
-                // Axis1 = vertical (dy), Axis2 = horizontal (dx)
-                dx: Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis2)),
-                dy: Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
-            ))
+            handleScroll(event)
 
         case .keyDown, .keyUp:
             handleKey(type: type, event: event)
@@ -132,6 +151,66 @@ public final class EventTapRecorder {
             break
         }
     }
+
+    // MARK: scrolling — bursts become one step with a duration
+
+    private func handleScroll(_ event: CGEvent) {
+        let now = Date().timeIntervalSince1970
+        // Axis1 = vertical (dy), Axis2 = horizontal (dx)
+        let dx = Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis2))
+        let dy = Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
+        guard dx != 0 || dy != 0 else { return }
+
+        withLock {
+            if let p = scrollPending,
+               sign(p.dx) == sign(dx), sign(p.dy) == sign(dy),
+               now - p.last < 0.3 {
+                // same continuous gesture — extend the duration, don't add steps
+                steps[p.id].holdMs = Int((now - p.start) * 1000)
+                scrollPending?.last = now
+                notifyThrottledLocked(now: now)
+                return
+            }
+            let delay = takeDelayMs(now: now)
+            appendLocked(MacroStep(
+                type: "scroll",
+                x: Int(event.location.x), y: Int(event.location.y),
+                delayMs: delay, dx: dx, dy: dy
+            ))
+            scrollPending = (dx, dy, now, now, steps.count - 1)
+        }
+    }
+
+    /// A non-scroll event breaks the burst; the step already carries its
+    /// final duration, so just drop the pointer.
+    private func endScrollBurst() {
+        withLock { scrollPending = nil }
+    }
+
+    private func sign(_ v: Int) -> Int { v > 0 ? 1 : v < 0 ? -1 : 0 }
+
+    private func notifyThrottledLocked(now: TimeInterval) {
+        guard now - lastBurstNotify > 0.15 else { return }
+        lastBurstNotify = now
+        onSteps?(steps)
+    }
+
+    // MARK: swipes (three-finger gestures)
+
+    private func handleSwipe(dx: CGFloat, dy: CGFloat) {
+        guard recording, abs(dx) > 0.05 || abs(dy) > 0.05 else { return }
+        endScrollBurst()
+        let now = Date().timeIntervalSince1970
+        let delay = takeDelayMs(now: now)
+        append(MacroStep(
+            type: "swipe",
+            delayMs: delay,
+            dx: dx < 0 ? -1 : dx > 0 ? 1 : 0,
+            dy: dy < 0 ? -1 : dy > 0 ? 1 : 0
+        ))
+    }
+
+    // MARK: keyboard — chords, repeats collapse into holds
 
     private func handleKey(type: CGEventType, event: CGEvent) {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
@@ -150,22 +229,46 @@ public final class EventTapRecorder {
 
         if type == .keyDown {
             if let m = modName { heldMods.insert(m); return }
-            let delay = takeDelayMs(now: Date().timeIntervalSince1970)
+
+            // Key repeat (holding a key): collapse — the open key_down step
+            // already represents it.
+            var isRepeat = false
+            withLock {
+                if let info = keyDownInfo, info.key == name { isRepeat = true }
+            }
+            if isRepeat { return }
+
+            endScrollBurst()
+            let now = Date().timeIntervalSince1970
+            let delay = takeDelayMs(now: now)
             if !heldMods.isEmpty {
+                if comboPending == name { return } // held chord repeat
                 let order = ["ctrl", "alt", "shift", "cmd"]
                 let combo = (order.filter { heldMods.contains($0) } + [name]).joined(separator: "+")
                 append(MacroStep(type: "key", key: combo, delayMs: delay))
                 comboPending = name
             } else {
-                append(MacroStep(type: "key_down", key: name, delayMs: delay))
+                withLock {
+                    appendLocked(MacroStep(type: "key_down", key: name, delayMs: delay))
+                    keyDownInfo = (name, now, steps.count - 1)
+                }
             }
         } else if type == .keyUp {
             if let m = modName { heldMods.remove(m); return }
             if comboPending == name { comboPending = nil; return }
+
+            let now = Date().timeIntervalSince1970
+            var holdMs = 0
+            if let info = keyDownInfo, info.key == name {
+                holdMs = Int((now - info.time) * 1000)
+                if holdMs < 250 { holdMs = 0 } // normal typing isn't a "hold"
+            }
+            keyDownInfo = nil
             withLock {
                 if let last = steps.last, last.type == "key_down", last.key == name {
                     steps.removeLast()
-                    appendLocked(MacroStep(type: "key", key: name, delayMs: last.delayMs))
+                    appendLocked(MacroStep(type: "key", key: name,
+                                           delayMs: last.delayMs, holdMs: holdMs))
                     return
                 }
                 appendLocked(MacroStep(type: "key_up", key: name, delayMs: 0))
