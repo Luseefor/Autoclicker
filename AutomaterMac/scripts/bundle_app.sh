@@ -87,5 +87,7 @@ if [ "${NOTARIZE:-0}" = "1" ]; then
   xcrun stapler staple "$DIST/Automater.app"
   xcrun stapler validate "$DIST/Automater.app"
   spctl --assess --type execute --verbose=4 "$DIST/Automater.app"
+  rm -f "$DIST/Automater.zip"
+  ditto -c -k --keepParent "$DIST/Automater.app" "$DIST/Automater.zip"
   echo "notarized and stapled: $DIST/Automater.app"
 fi
