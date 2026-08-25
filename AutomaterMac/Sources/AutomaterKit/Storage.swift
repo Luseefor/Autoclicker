@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// JSON persistence compatible with the Python app's on-disk layout:
+/// JSON persistence for Automater's on-disk layout:
 /// ~/Library/Application Support/AutomaterMac/{settings.json,macros/*.json}
 public enum Storage {
     private static let log = Logger(

@@ -11,7 +11,7 @@ public struct EventPoster: Sendable {
     // MARK: - Mouse
 
     /// Posts a two-axis scroll in line units (schema dx = horizontal,
-    /// dy = vertical, matching the Python engine's `_scroll`).
+    /// dy = vertical.
     public func scroll(
         dx: Int,
         dy: Int,

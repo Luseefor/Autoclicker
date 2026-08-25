@@ -1,6 +1,6 @@
 import Foundation
 
-/// macOS ANSI virtual keycodes (mirrors the Python `app/keycodes.py`).
+/// macOS ANSI virtual keycodes.
 public enum KeyCodeMap {
 
     public static let modifiers: [String: UInt16] = [

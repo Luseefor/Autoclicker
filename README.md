@@ -10,6 +10,4 @@ Background delivery uses documented macOS accessibility actions and synthetic ev
 
 Run unit tests with `cd AutomaterMac && swift test`.
 
-For the live Chromium end-to-end suite, grant Accessibility to the terminal, install the development requirements, then run `AUTOMATER_E2E_ENGINE=swift .venv/bin/python tests/e2e_browser.py`.
-
 See [the QA matrix](docs/QA.md), [privacy policy](docs/PRIVACY.md), and [support policy](docs/SUPPORT.md).

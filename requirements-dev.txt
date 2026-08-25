@@ -1,5 +1,0 @@
--r requirements.txt
-
-# Dev / test only
-pytest>=8.0
-playwright>=1.40

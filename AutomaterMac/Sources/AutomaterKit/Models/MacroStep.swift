@@ -2,7 +2,7 @@ import Foundation
 
 /// One recorded/authored automation step.
 ///
-/// JSON keys intentionally mirror the Python app's schema (snake_case) so
+/// JSON keys use a stable snake_case storage schema so
 /// existing macro files stay loadable across both implementations.
 public struct MacroStep: Codable, Equatable, Sendable {
     public var type: String
@@ -106,7 +106,7 @@ public struct MacroStep: Codable, Equatable, Sendable {
         case timeoutMs = "timeout_ms"
     }
 
-    /// Lenient decode matching Python's `MacroStep.from_dict`, which fills
+    /// Lenient decode for older storage files, which fills
     /// dataclass defaults for any absent key.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

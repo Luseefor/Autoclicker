@@ -12,4 +12,4 @@ Before each release, run `swift test`, then exercise the app on a clean macOS us
 | Macro recording | TextEdit | Recording, stop hotkey, replay, and cancellation behave correctly |
 | Upgrade | Previous signed build | Settings and macros survive an app upgrade |
 
-The browser end-to-end suite is a compatibility test, not proof that every third-party app accepts automated input.
+The real-app matrix is a compatibility test, not proof that every third-party app accepts automated input.

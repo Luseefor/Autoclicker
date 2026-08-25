@@ -2,7 +2,7 @@ import XCTest
 @testable import AutomaterKit
 
 final class ModelTests: XCTestCase {
-    func testMacroStepRoundTripsPythonSchema() throws {
+    func testMacroStepRoundTripsStorageSchema() throws {
         let json = """
         {"type":"click","x":5,"y":6,"button":"left","delay_ms":50,
          "coord_space":"window","app_name":"Safari","window_id":99,
@@ -22,7 +22,7 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(back, step)
     }
 
-    func testMacroDecodesPythonFileShape() throws {
+    func testMacroDecodesStorageFileShape() throws {
         let json = """
         {"id":"abc123","name":"Test","loop_count":3,"speed":1.5,
          "target_app_name":"Safari","activate_before_play":false,

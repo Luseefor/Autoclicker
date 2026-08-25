@@ -163,7 +163,7 @@ public actor MacroEngine {
     /// Backgrounded scrolls route into the target process so covered
     /// windows scroll too (global HID scrolls respect z-order).
     private func scrollStep(_ step: MacroStep, macro: Macro, bg: Bool) async {
-        // Mirror the Python engine: optionally move to the step position first.
+        // Optionally move to the step position first.
         if step.x != nil || step.coordSpace == "window" {
             if let p = resolvePoint(step, macro: macro) {
                 poster.moveCursor(x: p.x, y: p.y)
@@ -243,7 +243,7 @@ public actor MacroEngine {
     }
 
     /// AXPress cannot express press-and-move, so background drags always use
-    /// pid-routed synthetic events (same choice as the Python engine).
+    /// pid-routed synthetic events when background delivery is selected.
     private func drag(_ step: MacroStep, macro: Macro, bg: Bool) async {
         guard let start = resolvePoint(step, macro: macro) else { return }
         let end: CGPoint?
@@ -274,7 +274,7 @@ public actor MacroEngine {
         deliver(Self.downEvent(for: button), start.x, start.y, clickState: 1)
 
         // Interpolation density scales inversely with speed at a fixed 10ms
-        // cadence (matches the Python engine's max(5, int(20 / speed))).
+        // cadence with a minimum number of interpolation steps.
         // While the button is held, apps expect *Dragged events — plain
         // mouseMoved reads as a hover and drags never engage.
         let dragMoveType: CGEventType = button == .right ? .rightMouseDragged

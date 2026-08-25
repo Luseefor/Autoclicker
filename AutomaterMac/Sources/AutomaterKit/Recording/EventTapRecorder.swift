@@ -21,7 +21,7 @@ public final class EventTapRecorder {
     private var pressButton: MouseButton = .left
     private var pressTime: TimeInterval = 0
     private var dragMoved = false
-    // relative-delay capture (mirrors the Python recorder's _elapsed_ms)
+    // relative-delay capture
     private var lastEventTime: TimeInterval?
     // keyboard chord state
     private var heldMods: Set<String> = []
@@ -122,7 +122,7 @@ public final class EventTapRecorder {
     // MARK: - Event handling
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
-        // Never record interactions with our own UI — mirrors the Python
+        // Never record interactions with our own UI.
         // recorder's ignore_pids. Mouse/scroll: cursor over our topmost
         // window. Keyboard: our app has focus (cursor position is irrelevant
         // for key events — modifiers were wrongly dropped otherwise).

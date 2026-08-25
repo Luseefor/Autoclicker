@@ -121,7 +121,7 @@ public enum WindowScanner {
         }
     }
 
-    /// Best-match window for a target description; mirrors the Python app's
+    /// Best-match window for a target description.
     /// `find_window` fallback chain (id → bundle → name → title).
     public static func findWindow(
         bundleId: String? = nil,

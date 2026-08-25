@@ -44,7 +44,7 @@ public struct Macro: Codable, Equatable, Sendable, Identifiable {
         case activateBeforePlay = "activate_before_play"
     }
 
-    /// Lenient decode matching Python's `Macro.from_dict`.
+    /// Lenient decode for persisted macro files.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decodeIfPresent(String.self, forKey: .id)

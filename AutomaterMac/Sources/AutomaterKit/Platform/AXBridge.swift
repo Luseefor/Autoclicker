@@ -31,7 +31,7 @@ public enum AXBridge {
 
     /// PIDs that should receive an event at this point: the app pid plus the
     /// renderer/child pid when the AX hit lands in web content (WebKit,
-    /// Chromium). Mirrors the Python `_pids_at_point` behavior.
+    /// Chromium).
     public static func hitTestPIDs(appPID: pid_t, x: CGFloat, y: CGFloat) -> [pid_t] {
         var pids: [pid_t] = [appPID]
         let appElement = AXUIElementCreateApplication(appPID)

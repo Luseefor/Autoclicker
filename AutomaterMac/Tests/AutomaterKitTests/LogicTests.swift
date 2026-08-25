@@ -19,7 +19,7 @@ final class LogicTests: XCTestCase {
 
     // MARK: drag interpolation scales with playback speed
 
-    func testInterpolationStepsMatchPythonFormula() {
+    func testInterpolationStepsUseStableCadence() {
         XCTAssertEqual(MacroEngine.interpolationSteps(speed: 1.0), 20)
         XCTAssertEqual(MacroEngine.interpolationSteps(speed: 2.0), 10)
         XCTAssertEqual(MacroEngine.interpolationSteps(speed: 4.0), 5) // floor
