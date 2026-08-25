@@ -48,11 +48,9 @@ public enum AXBridge {
     }
 
     /// Forces Chromium/Electron-family apps to build their full web
-    /// accessibility tree. Without this they expose only layout containers.
-    ///
-    /// NEVER call this unconditionally: setting these flags on non-Chromium
-    /// apps (Calculator, many AppKit apps) wipes their AX tree entirely.
-    /// Gate behind needsLazyTreePoke(_:x:y:).
+    /// accessibility tree. Safe to call unconditionally — verified that both
+    /// flags together leave native apps (Calculator) intact. The earlier
+    /// "tree wipe" observation was an inactive-Space measurement artifact.
     public static func enableAccessibility(appPID: pid_t) {
         let appElement = AXUIElementCreateApplication(appPID)
         let value = kCFBooleanTrue as CFTypeRef
@@ -64,28 +62,6 @@ public enum AXBridge {
         AXUIElementSetAttributeValue(
             appElement, "AXManualAccessibility" as CFString, value
         )
-    }
-
-    /// True only when the app looks like a lazy-tree app: nothing resolvable
-    /// at the point AND the containing window exposes no children. Healthy
-    /// trees (Calculator, native apps) return false so their AX state is
-    /// never touched.
-    public static func needsLazyTreePoke(appPID: pid_t, x: CGFloat, y: CGFloat) -> Bool {
-        let appElement = AXUIElementCreateApplication(appPID)
-        var element: AXUIElement?
-        if AXUIElementCopyElementAtPosition(appElement, Float(x), Float(y), &element) == .success,
-           element != nil {
-            return false
-        }
-        guard let window = windowContaining(appPID: appPID, x: x, y: y) else {
-            return true // no resolvable tree at all — poke and hope
-        }
-        var kids: CFTypeRef?
-        if AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &kids) == .success,
-           let children = kids as? [AXUIElement], !children.isEmpty {
-            return false // window has a live subtree — leave it alone
-        }
-        return true
     }
 
     /// True once the app's AX tree resolves any element at this point — used

@@ -157,26 +157,21 @@ public actor ClickerEngine {
 
                 // Chromium-family apps build their AX tree lazily on first
                 // query; poke until an element resolves (max ~3s) so neither
-                // AX presses nor event routing get swallowed. Only poked when
-                // the tree actually looks lazy — blanket-flagging wipes the
-                // AX trees of native apps (Calculator!).
+                // AX presses nor event routing get swallowed. The flags are
+                // safe for native apps too (verified: Calculator keeps its
+                // tree) — the poke must always run or lazy trees never build.
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
-                    if !AXBridge.hasAXWindows(appPID: pid) {
-                        reportOnce("Target exposes no accessibility (game?) — if clicks don't land, turn off background delivery")
-                    }
-                    if AXBridge.needsLazyTreePoke(appPID: pid, x: point.x, y: point.y) {
-                        AXBridge.enableAccessibility(appPID: pid)
-                        for _ in 0..<20 {
-                            if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
-                                break
-                            }
-                            try await Task.sleep(nanoseconds: 150_000_000)
-                            try Task.checkCancellation()
+                    AXBridge.enableAccessibility(appPID: pid)
+                    for _ in 0..<20 {
+                        if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
+                            break
                         }
-                        try await Task.sleep(nanoseconds: 300_000_000)
+                        try await Task.sleep(nanoseconds: 150_000_000)
                         try Task.checkCancellation()
                     }
+                    try await Task.sleep(nanoseconds: 300_000_000)
+                    try Task.checkCancellation()
                 }
 
                 deliver(point: point, target: bgTarget, config: config,
