@@ -77,6 +77,9 @@ echo "signed: $APP (identity: ${IDENTITY:-ad-hoc})"
 mkdir -p "$DIST"
 rm -rf "$DIST/Automater.app"
 cp -R "$APP" "$DIST/Automater.app"
+# Finder can add metadata while copying a bundle into a user-visible folder.
+# It is not part of the signed payload and causes strict verification to fail.
+xattr -cr "$DIST/Automater.app" 2>/dev/null || true
 codesign -v "$DIST/Automater.app"
 
 cd "$DIST" && rm -f Automater.zip && ditto -c -k --keepParent Automater.app Automater.zip
