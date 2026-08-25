@@ -141,9 +141,10 @@ struct ClickerView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(maxWidth: 900)
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: 760, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: sections
@@ -237,10 +238,10 @@ struct ClickerView: View {
             if state.mode == .fixedPoint {
                 row("Fixed Point") {
                     HStack(spacing: 8) {
-                        TextField("", value: $state.fixedX, format: .number)
+                        TextField("X", value: $state.fixedX, format: .number)
                             .frame(width: 72)
                             .accessibilityLabel("Fixed point horizontal position")
-                        TextField("", value: $state.fixedY, format: .number)
+                        TextField("Y", value: $state.fixedY, format: .number)
                             .frame(width: 72)
                             .accessibilityLabel("Fixed point vertical position")
                         Button {
@@ -392,7 +393,7 @@ struct ClickerView: View {
                                     @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             Text(label)
-                .frame(width: 130, alignment: .leading)
+                .frame(width: 140, alignment: .leading)
             HStack(spacing: 14) { content() }
             Spacer(minLength: 0)
         }
@@ -729,10 +730,15 @@ struct MacrosView: View {
                 Form {
                     Section("Macro") {
                         TextField("Name", text: $state.currentMacro.name)
-                        Stepper(value: $state.currentMacro.loopCount, in: 0...10_000) {
-                            Text(state.currentMacro.loopCount == 0
-                                 ? "Loops: Infinite"
-                                 : "Loops: \(state.currentMacro.loopCount)")
+                        HStack {
+                            Text("Loops").frame(width: 64, alignment: .leading)
+                            TextField("0 = infinite", value: $state.currentMacro.loopCount,
+                                      format: .number)
+                                .frame(width: 100)
+                            Stepper("", value: $state.currentMacro.loopCount, in: 0...10_000)
+                                .labelsHidden()
+                            Text(state.currentMacro.loopCount == 0 ? "Infinite" : "times")
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Section("Steps") {
