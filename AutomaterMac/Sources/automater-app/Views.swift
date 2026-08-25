@@ -816,14 +816,25 @@ struct MacrosView: View {
                     .foregroundStyle(.secondary)
             } else {
                 List(Array(state.displaySteps.enumerated()), id: \.offset) { i, s in
-                    Text(stepLabel(s))
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .contextMenu {
-                            Button("Delete Step", role: .destructive) {
-                                state.deleteStep(at: i)
-                            }
+                    HStack {
+                        Text(stepLabel(s))
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button(role: .destructive) {
+                            state.deleteStep(at: i)
+                        } label: {
+                            Image(systemName: "trash")
                         }
+                        .buttonStyle(.borderless)
+                        .help("Delete this step")
+                        .accessibilityLabel("Delete step \(i + 1)")
+                    }
+                    .contextMenu {
+                        Button("Delete Step", role: .destructive) {
+                            state.deleteStep(at: i)
+                        }
+                    }
                 }
                 .listStyle(.plain)
                 .frame(minHeight: 160)

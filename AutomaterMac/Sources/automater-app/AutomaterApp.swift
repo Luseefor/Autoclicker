@@ -302,6 +302,7 @@ final class AppState: ObservableObject {
         pointPicker.onFinish = { [weak self] finished in
             Task { @MainActor in
                 guard let self else { return }
+                NSApp.unhide(nil)
                 self.isPicking = false
                 if finished {
                     let n = self.multipoints.count
@@ -326,6 +327,7 @@ final class AppState: ObservableObject {
         fixedPointPicker.onFinish = { [weak self] finished in
             Task { @MainActor in
                 guard let self else { return }
+                NSApp.unhide(nil)
                 self.isCapturingFixedPoint = false
                 if !finished { self.status = "Fixed-point capture needs Accessibility" }
             }
@@ -516,6 +518,7 @@ final class AppState: ObservableObject {
         isCapturingFixedPoint = fixedPointPicker.active
         if isCapturingFixedPoint {
             status = "Click anywhere to set the fixed point — Esc to cancel"
+            hideForInputCapture()
         }
     }
 
@@ -558,6 +561,7 @@ final class AppState: ObservableObject {
         isPicking = pointPicker.active
         if isPicking {
             status = "Picking points — click to add, Esc to finish"
+            hideForInputCapture()
         }
     }
 
@@ -649,6 +653,7 @@ final class AppState: ObservableObject {
         isRecording = recorder.recording
         if isRecording {
             status = "Recording… press the record hotkey to stop"
+            hideForInputCapture()
         }
     }
 
@@ -656,6 +661,15 @@ final class AppState: ObservableObject {
         guard recorder.recording else { return }
         recorder.stop()
         isRecording = false
+        NSApp.unhide(nil)
+    }
+
+    private func hideForInputCapture() {
+        // Let the global event tap/picker start before hiding our own window,
+        // so the next click or keystroke belongs to the real target app.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            NSApp.hide(nil)
+        }
     }
 
     /// ⌃⌥P — play the current macro; press again to stop mid-playback.
