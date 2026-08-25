@@ -154,6 +154,7 @@ struct ClickerView: View {
                 HStack(spacing: 12) {
                     TextField("", value: intervalValueBinding, format: .number)
                         .frame(width: 72)
+                        .accessibilityLabel("Click interval")
                     Stepper("", value: intervalValueBinding,
                             in: 1...intervalUnit.maxValue, step: intervalUnit.step)
                         .labelsHidden()
@@ -172,6 +173,7 @@ struct ClickerView: View {
                 HStack(spacing: 12) {
                     TextField("", value: jitterBinding, format: .number)
                         .frame(width: 72)
+                        .accessibilityLabel("Click interval jitter in milliseconds")
                     Stepper("", value: jitterBinding, in: 0...5_000)
                         .labelsHidden()
                         .fixedSize()
@@ -185,6 +187,7 @@ struct ClickerView: View {
                 HStack(spacing: 12) {
                     TextField("", value: repeatBinding, format: .number)
                         .frame(width: 72)
+                        .accessibilityLabel("Repeat count; zero means continuous")
                     Stepper("", value: repeatBinding, in: 0...1_000_000)
                         .labelsHidden()
                         .fixedSize()
@@ -236,8 +239,10 @@ struct ClickerView: View {
                     HStack(spacing: 8) {
                         TextField("", value: $state.fixedX, format: .number)
                             .frame(width: 72)
+                            .accessibilityLabel("Fixed point horizontal position")
                         TextField("", value: $state.fixedY, format: .number)
                             .frame(width: 72)
+                            .accessibilityLabel("Fixed point vertical position")
                         Button {
                             state.toggleFixedPointCapture()
                         } label: {
@@ -306,6 +311,7 @@ struct ClickerView: View {
         Section {
             Toggle("Click target app in the background (pointer stays put)",
                    isOn: $state.backgroundToApp)
+                .help("Uses supported macOS background delivery. Some apps may require foreground clicking.")
             Picker("Delivery", selection: $state.deliveryMode) {
                 Text("Smart background (AX + events)").tag(ClickerConfig.DeliveryMode.accessibility)
                 Text("Synthetic events only").tag(ClickerConfig.DeliveryMode.events)
@@ -322,6 +328,7 @@ struct ClickerView: View {
                     state.checkBackgroundCompatibility()
                 }
                 .disabled(state.targetWindow == nil)
+                .help("Checks whether the selected app exposes a supported macOS background-delivery path. It does not send a click.")
             }
             Text(state.backgroundCompatibility.detail)
                 .font(.caption)
