@@ -356,7 +356,7 @@ public actor MacroEngine {
         guard let tail else {
             // Modifier-only step ("key cmd") — tap the modifiers.
             guard !mods.isEmpty else { return }
-            let src = CGEventSource(stateID: .combinedSessionState)
+            let src = CGEventSource(stateID: .hidSystemState)
             let codes = mods.compactMap { KeyCodeMap.keycode(for: $0) }
             for c in codes {
                 CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: true)?
@@ -384,7 +384,7 @@ public actor MacroEngine {
     private func pressChord(mods: [String], tail: String,
                             downOnly: Bool, upOnly: Bool,
                             holdSeconds: Double = 0) {
-        let src = CGEventSource(stateID: .combinedSessionState)
+        let src = CGEventSource(stateID: .hidSystemState)
         var flags: CGEventFlags = []
         let codes = mods.compactMap { KeyCodeMap.keycode(for: $0) }
         for c in codes { flags.insert(Self.flag(forVirtual: c)) }
@@ -417,7 +417,7 @@ public actor MacroEngine {
 
     /// Unicode typing via event string payload (covers any character).
     private func typeText(_ text: String, pid: pid_t? = nil) {
-        let src = CGEventSource(stateID: .combinedSessionState)
+        let src = CGEventSource(stateID: .hidSystemState)
         for ch in text {
             guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
                   let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { continue }
