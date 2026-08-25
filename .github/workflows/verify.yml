@@ -1,0 +1,29 @@
+name: Verify macOS build
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, swift-rewrite]
+
+jobs:
+  test-and-package:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installer scripts
+        run: |
+          zsh -n AutomaterMac/scripts/bundle_app.sh
+          zsh -n AutomaterMac/scripts/create_dmg.sh
+      - name: Test Swift package
+        working-directory: AutomaterMac
+        run: swift test
+      - name: Build unsigned review artifact
+        run: AutomaterMac/scripts/bundle_app.sh
+      - name: Upload review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Automater-macOS-unsigned
+          path: |
+            dist/Automater.app
+            dist/Automater.zip
+          if-no-files-found: error
