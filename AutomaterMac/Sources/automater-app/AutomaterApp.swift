@@ -39,6 +39,9 @@ struct AutomaterApp: App {
             Button(state.recorder.recording ? "Stop recording" : "Start recording") {
                 state.toggleRecording()
             }
+            Button(state.playingMacro ? "Stop macro" : "Play macro") {
+                state.playToggle()
+            }
             Button("Stop everything") { state.stopAll() }
             Divider()
             Button("Quit") { NSApp.terminate(nil) }
@@ -114,9 +117,19 @@ enum HotkeyCoordinator {
     static let bindings: [(setting: String, fallback: String, label: String, action: Notification.Name)] = [
         ("hotkey_toggle", "ctrl+alt+a", "toggle clicker", .automaterToggle),
         ("hotkey_record", "ctrl+alt+r", "record", .automatorRecordToggle),
+        ("hotkey_play", "ctrl+alt+p", "play/stop macro", .automaterPlayToggle),
         ("hotkey_stop", "ctrl+alt+s", "stop all", .automaterStopAll),
         ("hotkey_grab", "ctrl+alt+g", "grab point", .automaterGrabPoint),
     ]
+
+    /// Every active binding, normalized — the recorder filters these out so
+    /// hotkey presses never end up inside a recorded macro.
+    static func activeCombos() -> Set<String> {
+        let s = Storage.loadSettings()
+        return Set(bindings.map {
+            HotkeyManager.normalized(s[$0.setting] as? String ?? $0.fallback)
+        })
+    }
 
     static func binding(for setting: String) -> String {
         let s = Storage.loadSettings()
@@ -155,6 +168,7 @@ extension Notification.Name {
     static let automatorRecordToggle = Notification.Name("automatorRecordToggle")
     static let automaterStopAll = Notification.Name("automaterStopAll")
     static let automaterGrabPoint = Notification.Name("automaterGrabPoint")
+    static let automaterPlayToggle = Notification.Name("automaterPlayToggle")
     /// `object` carries a user-facing status message (String).
     static let automaterStatus = Notification.Name("automaterStatus")
 }
@@ -291,6 +305,9 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         center.publisher(for: .automaterGrabPoint)
             .sink { [weak self] _ in self?.handleGrabHotkey() }
+            .store(in: &cancellables)
+        center.publisher(for: .automaterPlayToggle)
+            .sink { [weak self] _ in self?.playToggle() }
             .store(in: &cancellables)
         center.publisher(for: .automaterStatus)
             .receive(on: DispatchQueue.main)
@@ -573,15 +590,41 @@ final class AppState: ObservableObject {
             AXBridge.requestAccessibilityPrompt()
             return
         }
+        // The app's own hotkeys (⌃⌥R stop, ⌃⌥P play, …) must never leak
+        // into the recording.
+        recorder.ignoredCombos = HotkeyCoordinator.activeCombos()
         recordedSteps = []
         recorder.start()
         isRecording = recorder.recording
+        if isRecording {
+            status = "Recording… press the record hotkey to stop"
+        }
     }
 
     func stopRecording() {
         guard recorder.recording else { return }
         recorder.stop()
         isRecording = false
+    }
+
+    /// ⌃⌥P — play the current macro; press again to stop mid-playback.
+    func playToggle() {
+        if playingMacro {
+            Task {
+                await macroEngine.stop()
+                await MainActor.run {
+                    playingMacro = false
+                    status = "Playback stopped"
+                }
+            }
+            return
+        }
+        let macro = playableMacro()
+        guard !macro.steps.isEmpty else {
+            status = "Nothing to play — record or load a macro first"
+            return
+        }
+        play(macro: macro)
     }
 
     // MARK: macros
