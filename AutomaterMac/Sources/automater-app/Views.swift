@@ -885,7 +885,7 @@ struct MacrosView: View {
             let amount = secs ?? "\(s.dy ?? 0) lines"
             return "scroll \(scrollArrow(s)) \(amount)"
         case "swipe":
-            return "swipe \(swipeArrow(s))"
+            return "swipe \(swipeArrow(s)) · system shortcut"
         default:
             return s.type
         }
@@ -1016,6 +1016,9 @@ struct SettingsView: View {
                     Spacer()
                     Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([Storage.appDir])
+                    }
+                    Button("Reveal Diagnostics") {
+                        NSWorkspace.shared.activateFileViewerSelecting([Storage.diagnosticsURL])
                     }
                 }
             }

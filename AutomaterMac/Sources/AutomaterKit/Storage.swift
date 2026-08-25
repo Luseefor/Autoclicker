@@ -45,7 +45,7 @@ public enum Storage {
         ensureDirs()
         do {
             let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            try data.write(to: settingsURL)
+            try data.write(to: settingsURL, options: .atomic)
         } catch {
             log.error("writing settings.json: \(error.localizedDescription, privacy: .public)")
         }
@@ -93,7 +93,7 @@ public enum Storage {
         let url = macrosDir.appendingPathComponent("\(macro.id).json")
         do {
             let data = try JSONEncoder().encode(macro)
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic)
             return true
         } catch {
             log.error("saving macro \(macro.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -143,7 +143,7 @@ public enum Storage {
         ensureDirs()
         do {
             let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            try data.write(to: deliveryMemoryURL)
+            try data.write(to: deliveryMemoryURL, options: .atomic)
         } catch {
             log.error("writing delivery memory: \(error.localizedDescription, privacy: .public)")
         }

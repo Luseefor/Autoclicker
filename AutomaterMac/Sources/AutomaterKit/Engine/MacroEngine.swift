@@ -134,8 +134,17 @@ public actor MacroEngine {
     }
 
     private func activateTarget(_ macro: Macro) {
-        if let bundleId = macro.targetAppBundleId,
-           let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+        let window = WindowScanner.findWindow(
+            bundleId: macro.targetAppBundleId,
+            appName: macro.targetAppName,
+            windowTitle: macro.targetWindowTitle,
+            windowId: nil
+        )
+        if let window,
+           let app = NSRunningApplication(processIdentifier: window.pid) {
+            app.activate(options: [])
+        } else if let bundleId = macro.targetAppBundleId,
+                  let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
             app.activate(options: [])
         }
     }
