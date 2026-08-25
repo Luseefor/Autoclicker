@@ -125,6 +125,11 @@ public enum Storage {
         appDir.appendingPathComponent("delivery_memory.json")
     }
 
+    /// Local-only, redacted operational diagnostics; retained at most 200 entries.
+    public static var diagnosticsURL: URL {
+        appDir.appendingPathComponent("diagnostics.json")
+    }
+
     public static func loadDeliveryMemory() -> [String: String] {
         ensureDirs()
         guard let data = try? Data(contentsOf: deliveryMemoryURL),

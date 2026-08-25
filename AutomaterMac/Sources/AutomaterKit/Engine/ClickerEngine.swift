@@ -192,6 +192,7 @@ public actor ClickerEngine {
                 break
             } catch {
                 Self.log.error("click loop error: \(error.localizedDescription, privacy: .public)")
+                Diagnostics.record("clicker_error", "The click loop ended unexpectedly")
                 onStatus("Clicker error: \(error.localizedDescription)")
                 break
             }
