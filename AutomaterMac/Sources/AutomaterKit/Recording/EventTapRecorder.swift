@@ -81,6 +81,7 @@ public final class EventTapRecorder {
             | maskBit(.otherMouseDown) | maskBit(.otherMouseUp)
             | maskBit(.scrollWheel)
             | maskBit(.keyDown) | maskBit(.keyUp)
+            | maskBit(.flagsChanged)
             // trackpad gesture stream (three-finger swipes etc.) — raw values
             // 29 (kCGEventGesture) / 31 (kCGEventSwipe); not in the Swift overlay
             | (1 << 29) | (1 << 31)
@@ -121,12 +122,15 @@ public final class EventTapRecorder {
     // MARK: - Event handling
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
-        // Never record interactions with our own UI (Stop button, name
-        // fields, etc.) — mirrors the Python recorder's ignore_pids.
+        // Never record interactions with our own UI — mirrors the Python
+        // recorder's ignore_pids. Mouse/scroll: cursor over our topmost
+        // window. Keyboard: our app has focus (cursor position is irrelevant
+        // for key events — modifiers were wrongly dropped otherwise).
         switch type {
-        case .leftMouseDown, .rightMouseDown, .otherMouseDown,
-             .scrollWheel, .keyDown, .keyUp:
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
             if WindowScanner.ownsPoint(cgLocation: event.location) { return }
+        case .keyDown, .keyUp, .flagsChanged:
+            if NSApplication.shared.isActive { return }
         default:
             break
         }
@@ -154,12 +158,41 @@ public final class EventTapRecorder {
         case .keyDown, .keyUp:
             handleKey(type: type, event: event)
 
+        case .flagsChanged:
+            // Modifiers arrive as flagsChanged, not keyDown/keyUp — derive
+            // press/release from the event flags and feed the same path.
+            handleFlagsChanged(event)
+
         case _ where type.rawValue == 29 || type.rawValue == 31:
             handleGesture(event)
 
         default:
             break
         }
+    }
+
+    /// flagsChanged → synthetic keyDown/keyUp for the modifier involved.
+    private func handleFlagsChanged(_ event: CGEvent) {
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        guard let name = Self.namesByKeycode[UInt16(clamping: code)] else { return }
+        let modName: String?
+        switch name {
+        case "cmd", "command": modName = "cmd"
+        case "ctrl", "control": modName = "ctrl"
+        case "alt", "option", "opt": modName = "alt"
+        case "shift": modName = "shift"
+        default: return // flagsChanged only carries modifiers
+        }
+        let f = event.flags
+        let isDown: Bool
+        switch modName! {
+        case "cmd": isDown = f.contains(.maskCommand)
+        case "ctrl": isDown = f.contains(.maskControl)
+        case "alt": isDown = f.contains(.maskAlternate)
+        case "shift": isDown = f.contains(.maskShift)
+        default: return
+        }
+        handleKey(type: isDown ? .keyDown : .keyUp, event: event)
     }
 
     // MARK: gestures — three-finger swipes from the trackpad stream

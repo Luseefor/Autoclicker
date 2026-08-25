@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import AutomaterKit
 
@@ -160,6 +161,34 @@ case "multipoint":
     }
     done.wait()
     exit(0)
+
+case "gestures":
+    // Diagnostic: dump the raw gesture stream (event types 29/31) with all
+    // candidate fields — used to tune the recorder's swipe mapping.
+    let mask: CGEventMask = (1 << 29) | (1 << 31)
+    let callback: CGEventTapCallBack = { _, type, event, _ in
+        var line = "type=\(type.rawValue)"
+        for field in 100...140 {
+            guard let f = CGEventField(rawValue: UInt32(field)) else { continue }
+            let v = event.getIntegerValueField(f)
+            if v != 0 { line += " f\(field)=\(v)" }
+        }
+        let d = event.getDoubleValueField(CGEventField(rawValue: 123) ?? .scrollWheelEventScrollPhase)
+        if d != 0 { line += String(format: " f123d=%.2f", d) }
+        FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+        return Unmanaged.passUnretained(event)
+    }
+    guard let port = CGEvent.tapCreate(
+        tap: .cghidEventTap, place: .headInsertEventTap,
+        options: .listenOnly, eventsOfInterest: mask,
+        callback: callback, userInfo: nil
+    ) else { fail("gestures needs Accessibility permission") }
+    let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
+    CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
+    CGEvent.tapEnable(tap: port, enable: true)
+    FileHandle.standardError.write("listening 30s — do a three-finger swipe now\n".data(using: .utf8)!)
+    DispatchQueue.global().asyncAfter(deadline: .now() + 30) { exit(0) }
+    dispatchMain()
 
 case "resolve":
     // Debug: show what a background target resolves to.
