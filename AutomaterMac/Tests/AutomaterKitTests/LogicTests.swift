@@ -48,6 +48,12 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(reparsed, step)
     }
 
+    func testSwipeStepKeepsItsDirection() {
+        let swipe = MacroStep(type: "swipe", dx: -1, dy: 0)
+        XCTAssertEqual(swipe.dx, -1)
+        XCTAssertEqual(swipe.dy, 0)
+    }
+
     // MARK: hotkey binding parsing
 
     func testHotkeyParseModifiersAndKey() {

@@ -228,7 +228,13 @@ public final class EventTapRecorder {
             }
             scrollPending = nil
             let delay = takeDelayMs(now: now)
-            appendLocked(MacroStep(type: "swipe", delayMs: delay, dx: 0, dy: 0))
+            // Some trackpads emit only one gesture event. Persist its first
+            // direction immediately; waiting for a second event created a
+            // visible but inert swipe step (0, 0).
+            appendLocked(MacroStep(
+                type: "swipe", delayMs: delay,
+                dx: sign(Int(dx)), dy: sign(Int(dy))
+            ))
             gesturePending = (dx, dy, now, steps.count - 1)
         }
     }
