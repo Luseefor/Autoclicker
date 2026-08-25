@@ -136,7 +136,7 @@ public actor MacroEngine {
     private func activateTarget(_ macro: Macro) {
         if let bundleId = macro.targetAppBundleId,
            let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
-            app.activate(options: [.activateIgnoringOtherApps])
+            app.activate(options: [])
         }
     }
 
