@@ -78,7 +78,7 @@ public actor MacroEngine {
             poster.moveCursor(x: p.x, y: p.y)
 
         case "scroll":
-            await scrollStep(step, macro: macro)
+            await scrollStep(step, macro: macro, bg: bg)
 
         case "swipe":
             swipe(step, macro: macro)
@@ -160,7 +160,9 @@ public actor MacroEngine {
 
     /// Scroll: a step with hold_ms replays as continuous scrolling for that
     /// duration (recorder coalesces bursts); without, a single tick.
-    private func scrollStep(_ step: MacroStep, macro: Macro) async {
+    /// Backgrounded scrolls route into the target process so covered
+    /// windows scroll too (global HID scrolls respect z-order).
+    private func scrollStep(_ step: MacroStep, macro: Macro, bg: Bool) async {
         // Mirror the Python engine: optionally move to the step position first.
         if step.x != nil || step.coordSpace == "window" {
             if let p = resolvePoint(step, macro: macro) {
@@ -171,15 +173,21 @@ public actor MacroEngine {
         let dy = step.dy ?? 0
         guard dx != 0 || dy != 0 else { return }
 
+        let target = bg ? bgTarget(step, macro) : ResolvedTarget.none
+        func post() {
+            poster.scroll(dx: dx, dy: dy,
+                          pid: target.pid, windowNumber: target.windowNumber)
+        }
+
         let duration = Double(max(0, step.holdMs)) / 1000.0 / max(0.05, macro.speed)
         guard duration > 0.05 else {
-            poster.scroll(dx: dx, dy: dy)
+            post()
             return
         }
         let tick: Double = 0.06
         var elapsed: Double = 0
         while elapsed < duration {
-            poster.scroll(dx: dx, dy: dy)
+            post()
             do { try await Task.sleep(nanoseconds: UInt64(tick * 1_000_000_000)) }
             catch { break }
             elapsed += tick
@@ -267,13 +275,17 @@ public actor MacroEngine {
 
         // Interpolation density scales inversely with speed at a fixed 10ms
         // cadence (matches the Python engine's max(5, int(20 / speed))).
+        // While the button is held, apps expect *Dragged events — plain
+        // mouseMoved reads as a hover and drags never engage.
+        let dragMoveType: CGEventType = button == .right ? .rightMouseDragged
+            : button == .middle ? .otherMouseDragged : .leftMouseDragged
         let stepCount = Self.interpolationSteps(speed: macro.speed)
         do {
             for i in 1...stepCount {
                 let t = Double(i) / Double(stepCount)
                 let x = start.x + (end.x - start.x) * t
                 let y = start.y + (end.y - start.y) * t
-                deliver(.mouseMoved, x, y, clickState: 0)
+                deliver(dragMoveType, x, y, clickState: 1)
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
         } catch {

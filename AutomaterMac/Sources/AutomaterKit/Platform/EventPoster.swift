@@ -19,7 +19,7 @@ public struct EventPoster: Sendable {
         windowNumber: Int? = nil
     ) {
         guard dx != 0 || dy != 0 else { return }
-        let source = CGEventSource(stateID: .combinedSessionState)
+        let source = CGEventSource(stateID: .hidSystemState)
         guard let event = CGEvent(
             scrollWheelEvent2Source: source,
             units: .line,
@@ -52,9 +52,10 @@ public struct EventPoster: Sendable {
         clickState: Int = 1,
         windowNumber: Int? = nil
     ) {
-        let source = CGEventSource(
-            stateID: pid != nil ? .privateState : .combinedSessionState
-        )
+        // hidSystemState makes posted events report the same source state as
+        // real hardware input — apps that filter synthetic events by source
+        // accept these.
+        let source = CGEventSource(stateID: .hidSystemState)
         guard let event = CGEvent(
             mouseEventSource: source,
             mouseType: type,
@@ -154,6 +155,11 @@ public struct EventPoster: Sendable {
         }
         for target in targets {
             moveCursor(x: x, y: y, pid: target, windowNumber: windowNumber)
+            // Hover-settling: renderers arm hover state lazily — a press in
+            // the same instant as the first move hits elements that aren't
+            // interactive yet (hover-revealed menus/buttons on the web).
+            Thread.sleep(forTimeInterval: 0.04)
+            moveCursor(x: x, y: y, pid: target, windowNumber: windowNumber)
             click(x: x, y: y, button: button, kind: kind,
                   pid: target, windowNumber: windowNumber)
         }
@@ -210,7 +216,7 @@ public struct EventPoster: Sendable {
             acc.insert(Self.flag(forVirtual: code))
         }
 
-        let source = CGEventSource(stateID: .combinedSessionState)
+        let source = CGEventSource(stateID: .hidSystemState)
 
         func post(_ keycode: UInt16, _ down: Bool) {
             guard let event = CGEvent(

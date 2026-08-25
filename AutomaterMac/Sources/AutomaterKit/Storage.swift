@@ -115,6 +115,34 @@ public enum Storage {
             return false
         }
     }
+
+    // MARK: - Delivery memory (per-target tier knowledge)
+
+    /// targetKey ("bundle:id" or "pid:N") → "ax" | "events".
+    /// Targets that ignored AXPress skip straight to synthetic events next
+    /// session — faster clicks, no wasted AX probes.
+    public static var deliveryMemoryURL: URL {
+        appDir.appendingPathComponent("delivery_memory.json")
+    }
+
+    public static func loadDeliveryMemory() -> [String: String] {
+        ensureDirs()
+        guard let data = try? Data(contentsOf: deliveryMemoryURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
+            return [:]
+        }
+        return dict
+    }
+
+    public static func saveDeliveryMemory(_ dict: [String: String]) {
+        ensureDirs()
+        do {
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            try data.write(to: deliveryMemoryURL)
+        } catch {
+            log.error("writing delivery memory: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 }
 
 private enum StorageError: LocalizedError {

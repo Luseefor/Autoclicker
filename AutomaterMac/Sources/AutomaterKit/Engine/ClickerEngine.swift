@@ -23,6 +23,10 @@ public actor ClickerEngine {
 
     private var task: Task<Void, Never>?
     private let poster = EventPoster()
+    // Per-target delivery memory: keys (bundle ids) whose AX tier ignored us.
+    private var deliveryMemory: [String: String] = [:]
+    private var axSkip: Set<String> = []
+    private var targetKeys: [pid_t: String] = [:]
 
     public init() {}
 
@@ -37,6 +41,9 @@ public actor ClickerEngine {
         stop(silent: true)
         clicksPerformed = 0
         isRunning = true
+        deliveryMemory = Storage.loadDeliveryMemory()
+        axSkip = Set(deliveryMemory.filter { $0.value == "events" }.keys)
+        targetKeys = [:]
         onStatus("Clicker ON" + (config.backgroundToApp ? " (background app)" : ""))
 
         task = Task { [weak self] in
@@ -162,6 +169,9 @@ public actor ClickerEngine {
                 // tree) — the poke must always run or lazy trees never build.
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
+                    if !AXBridge.hasAXWindows(appPID: pid) {
+                        reportOnce("Target exposes no accessibility (game?) — if clicks don't land, turn off background delivery")
+                    }
                     AXBridge.enableAccessibility(appPID: pid)
                     for _ in 0..<20 {
                         if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
@@ -210,9 +220,23 @@ public actor ClickerEngine {
         if config.backgroundToApp, let pid = target.pid {
             switch config.deliveryMode {
             case .accessibility:
-                let landed = poster.axClick(x: point.x, y: point.y, pid: pid,
+                let key = deliveryKey(pid: pid)
+                let landed: Bool
+                if axSkip.contains(key) {
+                    landed = false // remembered: this app ignores AXPress
+                } else {
+                    landed = poster.axClick(x: point.x, y: point.y, pid: pid,
                                             button: config.button, kind: config.clickKind)
+                }
                 if landed { return }
+                if !axSkip.contains(key) {
+                    // First AX miss for this target: remember it so future
+                    // sessions skip straight to synthetic events.
+                    axSkip.insert(key)
+                    deliveryMemory[key] = "events"
+                    Storage.saveDeliveryMemory(deliveryMemory)
+                    report("Target ignores AX — switching to synthetic events (remembered for this app)")
+                }
                 // Tier 2: route synthetic events into the process — reaches
                 // covered windows that expose no pressable AX elements.
                 let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
@@ -244,6 +268,15 @@ public actor ClickerEngine {
                 kind: config.clickKind
             )
         }
+    }
+
+    /// Stable per-target identity for delivery memory: bundle id when
+    /// available, else the pid (session-only).
+    private func deliveryKey(pid: pid_t) -> String {
+        if let k = targetKeys[pid] { return k }
+        let k = WindowScanner.bundleIdForPID(pid) ?? "pid:\(pid)"
+        targetKeys[pid] = k
+        return k
     }
 
     // MARK: - Point resolution (static: no isolation needed)
