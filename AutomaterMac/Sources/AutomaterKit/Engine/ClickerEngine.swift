@@ -162,6 +162,9 @@ public actor ClickerEngine {
                 // AX trees of native apps (Calculator!).
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
+                    if !AXBridge.hasAXWindows(appPID: pid) {
+                        reportOnce("Target exposes no accessibility (game?) — if clicks don't land, turn off background delivery")
+                    }
                     if AXBridge.needsLazyTreePoke(appPID: pid, x: point.x, y: point.y) {
                         AXBridge.enableAccessibility(appPID: pid)
                         for _ in 0..<20 {
@@ -227,7 +230,7 @@ public actor ClickerEngine {
                     kind: config.clickKind
                 )
                 Self.log.info("AX unreachable at (\(Int(point.x)),\(Int(point.y))) pid \(pid) — routed synthetic-event fallback")
-                report("Target obscured — delivering via synthetic-event fallback")
+                report("Target obscured — using synthetic-event fallback (games like Roblox ignore this; use foreground delivery)")
             case .events:
                 let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
                 poster.backgroundClick(

@@ -102,6 +102,19 @@ public enum AXBridge {
         return windowContaining(appPID: appPID, x: x, y: y) != nil
     }
 
+    /// False when the app exposes no AX windows at all — typical of games
+    /// (Roblox, Minecraft) which read raw hardware input and ignore both
+    /// AXPress and pid-routed synthetic events. Foreground delivery is the
+    /// only thing that works on those.
+    public static func hasAXWindows(appPID: pid_t) -> Bool {
+        let appElement = AXUIElementCreateApplication(appPID)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement, kAXWindowsAttribute as CFString, &value
+        ) == .success else { return false }
+        return (value as? [AXUIElement])?.isEmpty == false
+    }
+
     /// Human-readable dump of the AX element chain at a point (debugging).
     public static func describeElementAt(appPID: pid_t, x: CGFloat, y: CGFloat) -> String {
         let appElement = AXUIElementCreateApplication(appPID)
