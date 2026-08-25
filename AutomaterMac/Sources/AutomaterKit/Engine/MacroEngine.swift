@@ -303,7 +303,22 @@ public actor MacroEngine {
                 mods.append(lowered)
             } else { tail = part }
         }
-        guard let tail else { return }
+        guard let tail else {
+            // Modifier-only step ("key cmd") — tap the modifiers.
+            guard !mods.isEmpty else { return }
+            let src = CGEventSource(stateID: .combinedSessionState)
+            let codes = mods.compactMap { KeyCodeMap.keycode(for: $0) }
+            for c in codes {
+                CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: true)?
+                    .post(tap: .cghidEventTap)
+            }
+            usleep(12_000)
+            for c in codes.reversed() {
+                CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: false)?
+                    .post(tap: .cghidEventTap)
+            }
+            return
+        }
         // Recorded holds (key pressed ≥250ms) replay as press → wait → release.
         let holdSeconds = step.holdMs > 0
             ? Double(step.holdMs) / 1000.0 / max(0.05, macro.speed)

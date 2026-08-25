@@ -16,7 +16,7 @@ public final class HotkeyManager {
     @discardableResult
     public func register(_ binding: String, handler: @escaping () -> Void) -> Bool {
         guard let (mods, keyCode) = Self.parse(binding) else { return false }
-        var hotKeyID = EventHotKeyID(signature: OSType(0x41555448 /*AUTH*/), id: nextId)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x41555448 /*AUTH*/), id: nextId)
         var ref: EventHotKeyRef?
         let err = RegisterEventHotKey(
             keyCode, mods, hotKeyID,
@@ -82,5 +82,23 @@ public final class HotkeyManager {
         }
         guard let key else { return nil }
         return (mods, key)
+    }
+
+    /// Canonical form: mods in ctrl,alt,shift,cmd order + key, lowercased —
+    /// lets the recorder recognize its own app's hotkey chords.
+    public static func normalized(_ combo: String) -> String {
+        var mods: [String] = []
+        var tail: String?
+        for raw in combo.split(separator: "+") {
+            let token = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            switch token {
+            case "ctrl", "control": mods.append("ctrl")
+            case "alt", "opt", "option": mods.append("alt")
+            case "shift": mods.append("shift")
+            case "cmd", "command": mods.append("cmd")
+            default: tail = token
+            }
+        }
+        return (mods + [tail ?? ""]).joined(separator: "+")
     }
 }

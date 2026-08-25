@@ -15,7 +15,6 @@ public final class EventTapRecorder {
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var gestureMonitor: Any?
 
     // press state
     private var pressPos: CGPoint?
@@ -27,11 +26,20 @@ public final class EventTapRecorder {
     // keyboard chord state
     private var heldMods: Set<String> = []
     private var comboPending: String?
+    // bare-modifier taps: mods pressed & released without any chord
+    private var tappedMods: [String] = []
+    private var chordUsedMods = false
+    // open gesture (three-finger swipe coalescing)
+    private var gesturePending: (dxSum: Double, dySum: Double, last: TimeInterval, id: Int)?
     // open key press (for repeat-coalescing and hold duration)
     private var keyDownInfo: (key: String, time: TimeInterval, id: Int)?
     // open scroll burst (continuous scrolling coalesces into one step)
     private var scrollPending: (dx: Int, dy: Int, start: TimeInterval, last: TimeInterval, id: Int)?
     private var lastBurstNotify: TimeInterval = 0
+    /// App hotkey chords (normalized) — pressing them while recording must
+    /// NOT end up inside the macro (e.g. ⌃⌥R that stops the recording).
+    public var ignoredCombos: Set<String> = []
+    private var ignoredKeyUp: String?
     // key code → name reverse map
     private static let namesByKeycode: [UInt16: String] = {
         var m: [UInt16: String] = [:]
@@ -48,6 +56,8 @@ public final class EventTapRecorder {
             steps.removeAll()
             keyDownInfo = nil
             scrollPending = nil
+            gesturePending = nil
+            ignoredKeyUp = nil
         }
         onSteps?(steps)
     }
@@ -56,13 +66,6 @@ public final class EventTapRecorder {
         guard tap == nil else { return }
         clear()
         lastEventTime = nil
-        func maskBit(_ t: CGEventType) -> UInt64 { 1 << t.rawValue }
-        let mask: CGEventMask =
-            maskBit(.leftMouseDown) | maskBit(.leftMouseUp)
-            | maskBit(.rightMouseDown) | maskBit(.rightMouseUp)
-            | maskBit(.otherMouseDown) | maskBit(.otherMouseUp)
-            | maskBit(.scrollWheel)
-            | maskBit(.keyDown) | maskBit(.keyUp)
 
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
@@ -70,6 +73,17 @@ public final class EventTapRecorder {
                 .handle(type: type, event: event)
             return Unmanaged.passUnretained(event)
         }
+
+        func maskBit(_ t: CGEventType) -> UInt64 { 1 << t.rawValue }
+        let mask: CGEventMask =
+            maskBit(.leftMouseDown) | maskBit(.leftMouseUp)
+            | maskBit(.rightMouseDown) | maskBit(.rightMouseUp)
+            | maskBit(.otherMouseDown) | maskBit(.otherMouseUp)
+            | maskBit(.scrollWheel)
+            | maskBit(.keyDown) | maskBit(.keyUp)
+            // trackpad gesture stream (three-finger swipes etc.) — raw values
+            // 29 (kCGEventGesture) / 31 (kCGEventSwipe); not in the Swift overlay
+            | (1 << 29) | (1 << 31)
 
         guard let port = CGEvent.tapCreate(
             tap: .cghidEventTap, place: .headInsertEventTap,
@@ -85,13 +99,6 @@ public final class EventTapRecorder {
         CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
         CGEvent.tapEnable(tap: port, enable: true)
 
-        // Three-finger swipes (Spaces / Mission Control) don't come through
-        // the CG tap as usable events — NSEvent's global monitor does.
-        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) {
-            [weak self] event in
-            self?.handleSwipe(dx: event.deltaX, dy: event.deltaY)
-        }
-
         onStatus?("Recording…")
     }
 
@@ -104,10 +111,10 @@ public final class EventTapRecorder {
         }
         tap = nil
         runLoopSource = nil
-        if let gestureMonitor { NSEvent.removeMonitor(gestureMonitor) }
-        gestureMonitor = nil
         keyDownInfo = nil
         scrollPending = nil
+        gesturePending = nil
+        ignoredKeyUp = nil
         onStatus?("Recorded \(steps.count) steps")
     }
 
@@ -147,8 +154,49 @@ public final class EventTapRecorder {
         case .keyDown, .keyUp:
             handleKey(type: type, event: event)
 
+        case _ where type.rawValue == 29 || type.rawValue == 31:
+            handleGesture(event)
+
         default:
             break
+        }
+    }
+
+    // MARK: gestures — three-finger swipes from the trackpad stream
+
+    /// Undocumented but stable gesture fields: 123 = swipe delta, 124 = swipe
+    /// direction. Delta sign gives horizontal direction; vertical falls back
+    /// to the direction field.
+    private static let gestureDeltaField = CGEventField(rawValue: 123)
+    private static let gestureDirField = CGEventField(rawValue: 124)
+
+    private func handleGesture(_ event: CGEvent) {
+        if WindowScanner.ownsPoint(cgLocation: event.location) { return }
+        var dx: Double = 0, dy: Double = 0
+        if let f = Self.gestureDeltaField {
+            dx = event.getDoubleValueField(f)
+        }
+        if dx == 0, let f = Self.gestureDirField {
+            let d = event.getIntegerValueField(f)
+            if d != 0 { dy = Double(d) }
+        }
+        guard dx != 0 || dy != 0 else { return }
+
+        let now = Date().timeIntervalSince1970
+        withLock {
+            if let p = gesturePending, now - p.last < 0.35 {
+                gesturePending?.dxSum += dx
+                gesturePending?.dySum += dy
+                gesturePending?.last = now
+                steps[p.id].dx = sign(Int(p.dxSum + dx))
+                steps[p.id].dy = sign(Int(p.dySum + dy))
+                notifyThrottledLocked(now: now)
+                return
+            }
+            scrollPending = nil
+            let delay = takeDelayMs(now: now)
+            appendLocked(MacroStep(type: "swipe", delayMs: delay, dx: 0, dy: 0))
+            gesturePending = (dx, dy, now, steps.count - 1)
         }
     }
 
@@ -184,7 +232,10 @@ public final class EventTapRecorder {
     /// A non-scroll event breaks the burst; the step already carries its
     /// final duration, so just drop the pointer.
     private func endScrollBurst() {
-        withLock { scrollPending = nil }
+        withLock {
+            scrollPending = nil
+            gesturePending = nil
+        }
     }
 
     private func sign(_ v: Int) -> Int { v > 0 ? 1 : v < 0 ? -1 : 0 }
@@ -228,7 +279,18 @@ public final class EventTapRecorder {
         }()
 
         if type == .keyDown {
-            if let m = modName { heldMods.insert(m); return }
+            if let m = modName {
+                // Track bare-modifier taps: mods released without any chord
+                // record as their own step ("key cmd"), consumed chords don't.
+                if heldMods.isEmpty {
+                    tappedMods = [m]
+                    chordUsedMods = false
+                } else if !tappedMods.contains(m) {
+                    tappedMods.append(m)
+                }
+                heldMods.insert(m)
+                return
+            }
 
             // Key repeat (holding a key): collapse — the open key_down step
             // already represents it.
@@ -245,8 +307,14 @@ public final class EventTapRecorder {
                 if comboPending == name { return } // held chord repeat
                 let order = ["ctrl", "alt", "shift", "cmd"]
                 let combo = (order.filter { heldMods.contains($0) } + [name]).joined(separator: "+")
+                if ignoredCombos.contains(HotkeyManager.normalized(combo)) {
+                    ignoredKeyUp = name // app hotkey — never record it
+                    return
+                }
                 append(MacroStep(type: "key", key: combo, delayMs: delay))
                 comboPending = name
+                chordUsedMods = true
+                tappedMods.removeAll()
             } else {
                 withLock {
                     appendLocked(MacroStep(type: "key_down", key: name, delayMs: delay))
@@ -254,8 +322,25 @@ public final class EventTapRecorder {
                 }
             }
         } else if type == .keyUp {
-            if let m = modName { heldMods.remove(m); return }
+            if let m = modName {
+                heldMods.remove(m)
+                // All mods released and nothing consumed them → bare tap.
+                if heldMods.isEmpty, !chordUsedMods, !tappedMods.isEmpty {
+                    let combo = tappedMods.joined(separator: "+")
+                    tappedMods.removeAll()
+                    chordUsedMods = false
+                    if !ignoredCombos.contains(HotkeyManager.normalized(combo)) {
+                        let delay = takeDelayMs(now: Date().timeIntervalSince1970)
+                        append(MacroStep(type: "key", key: combo, delayMs: delay))
+                    }
+                } else if heldMods.isEmpty {
+                    tappedMods.removeAll()
+                    chordUsedMods = false
+                }
+                return
+            }
             if comboPending == name { comboPending = nil; return }
+            if ignoredKeyUp == name { ignoredKeyUp = nil; return }
 
             let now = Date().timeIntervalSince1970
             var holdMs = 0
