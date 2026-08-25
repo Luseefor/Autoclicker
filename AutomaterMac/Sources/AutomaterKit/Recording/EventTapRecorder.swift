@@ -33,6 +33,11 @@ public final class EventTapRecorder {
     private var gesturePending: (dxSum: Double, dySum: Double, last: TimeInterval, id: Int)?
     // open key press (for repeat-coalescing and hold duration)
     private var keyDownInfo: (key: String, time: TimeInterval, id: Int)?
+    // Plain text is kept as a compact `type` step.  Remember the physical
+    // keys until their matching keyUp arrives so it is not recorded as an
+    // orphaned `key_up` step.
+    private var typedKeyNames: Set<String> = []
+    private var lastTypedTime: TimeInterval?
     // open scroll burst (continuous scrolling coalesces into one step)
     private var scrollPending: (dx: Int, dy: Int, start: TimeInterval, last: TimeInterval, id: Int)?
     private var lastBurstNotify: TimeInterval = 0
@@ -58,6 +63,8 @@ public final class EventTapRecorder {
             scrollPending = nil
             gesturePending = nil
             ignoredKeyUp = nil
+            typedKeyNames.removeAll()
+            lastTypedTime = nil
         }
         onSteps?(steps)
     }
@@ -116,6 +123,8 @@ public final class EventTapRecorder {
         scrollPending = nil
         gesturePending = nil
         ignoredKeyUp = nil
+        typedKeyNames.removeAll()
+        lastTypedTime = nil
         onStatus?("Recorded \(steps.count) steps")
     }
 
@@ -307,8 +316,10 @@ public final class EventTapRecorder {
 
     private func handleKey(type: CGEventType, event: CGEvent) {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
-        let name = Self.namesByKeycode[UInt16(clamping: code)]
-            ?? "vk_\(code)"
+        // Ignore device-specific keys that we cannot replay.  Recording them
+        // as `key_down` / `key_up` made the macro look broken and added no
+        // usable automation step.
+        guard let name = Self.namesByKeycode[UInt16(clamping: code)] else { return }
 
         let modName: String? = {
             switch name {
@@ -345,6 +356,12 @@ public final class EventTapRecorder {
             endScrollBurst()
             let now = Date().timeIntervalSince1970
             let delay = takeDelayMs(now: now)
+            if heldMods.subtracting(["shift"]).isEmpty,
+               let text = printableText(from: event) {
+                appendTypedText(text, delayMs: delay, now: now)
+                typedKeyNames.insert(name)
+                return
+            }
             if !heldMods.isEmpty {
                 if comboPending == name { return } // held chord repeat
                 let order = ["ctrl", "alt", "shift", "cmd"]
@@ -383,6 +400,7 @@ public final class EventTapRecorder {
             }
             if comboPending == name { comboPending = nil; return }
             if ignoredKeyUp == name { ignoredKeyUp = nil; return }
+            if typedKeyNames.remove(name) != nil { return }
 
             let now = Date().timeIntervalSince1970
             var holdMs = 0
@@ -400,6 +418,41 @@ public final class EventTapRecorder {
                 }
                 appendLocked(MacroStep(type: "key_up", key: name, delayMs: 0))
             }
+        }
+    }
+
+    /// Returns text only for normal printable input.  Navigation keys,
+    /// Return, Tab, and shortcuts remain discrete keyboard steps.
+    private func printableText(from event: CGEvent) -> String? {
+        var length = 0
+        var buffer = Array<UniChar>(repeating: 0, count: 16)
+        event.keyboardGetUnicodeString(
+            maxStringLength: buffer.count,
+            actualStringLength: &length,
+            unicodeString: &buffer
+        )
+        guard length > 0 else { return nil }
+        let text = String(utf16CodeUnits: buffer, count: min(length, buffer.count))
+        guard !text.isEmpty,
+              text.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        return text
+    }
+
+    /// Merge normal typing into a readable text step.  A pause still starts a
+    /// new step so intentional timing between phrases is retained.
+    private func appendTypedText(_ text: String, delayMs: Int, now: TimeInterval) {
+        withLock {
+            if let last = steps.indices.last,
+               steps[last].type == "type",
+               let lastTypedTime,
+               now - lastTypedTime < 0.7 {
+                steps[last].text = (steps[last].text ?? "") + text
+                self.lastTypedTime = now
+                onSteps?(steps)
+                return
+            }
+            appendLocked(MacroStep(type: "type", text: text, delayMs: delayMs))
+            lastTypedTime = now
         }
     }
 

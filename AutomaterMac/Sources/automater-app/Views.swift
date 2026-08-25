@@ -886,7 +886,7 @@ struct MacrosView: View {
             return "hold (\(s.x ?? 0),\(s.y ?? 0)) \(s.button ?? "left") \(secs ?? "")"
         case "drag":
             return "drag (\(s.x ?? 0),\(s.y ?? 0)) → (\(s.endX ?? 0),\(s.endY ?? 0)) \(s.button ?? "left")"
-        case "key":
+        case "key", "key_down", "key_up":
             return "key \(s.key ?? "?")" + (secs.map { " · hold \($0)" } ?? "")
         case "type":
             return "type \"\((s.text ?? "").prefix(24))\""
