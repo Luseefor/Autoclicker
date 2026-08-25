@@ -50,4 +50,8 @@ sync
 hdiutil detach "$MOUNT" -quiet
 hdiutil convert "$RW" -format UDZO -o "$OUT" >/dev/null
 rm -f "$RW"
+# Finder's disk-window customization may tag the source app after the image
+# has been created.  Keep the release bundle clean for strict verification;
+# the already-copied DMG contents are unaffected.
+xattr -cr "$APP" 2>/dev/null || true
 echo "created $OUT"
