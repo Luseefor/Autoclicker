@@ -16,7 +16,10 @@ rm -f "$OUT" "$RW"
 mkdir -p "$STAGE/.background"
 
 swift "$ROOT/AutomaterMac/scripts/make_dmg_background.swift" "$STAGE/.background/background.png"
-hdiutil create -size 40m -fs HFS+ -volname "$VOLUME" -format UDRW "$RW" >/dev/null
+# Newer hdiutil versions accept -format only when copying from a folder or
+# device.  A blank UDIF is already read/write and can later be converted to
+# the compressed distribution image below.
+hdiutil create -size 40m -fs HFS+ -volname "$VOLUME" -type UDIF "$RW" >/dev/null
 MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/\/Volumes\// {print $3; exit}')"
 trap 'hdiutil detach "$MOUNT" -quiet 2>/dev/null || true; rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$MOUNT/Automater.app"
