@@ -130,21 +130,29 @@ struct ClickerView: View {
     }
 
     var body: some View {
-        Form {
-            timingSection
-            mouseSection
-            modeSection
-            multipointSection
-            deliverySection
-            Section {
-                startButton
+        GeometryReader { geo in
+            HStack(alignment: .top, spacing: 24) {
+                Form {
+                    timingSection
+                    mouseSection
+                    modeSection
+                    multipointSection
+                    deliverySection
+                    Section { startButton }
+                }
+                .formStyle(.grouped)
+                .frame(maxWidth: 760, maxHeight: .infinity, alignment: .topLeading)
+
+                if geo.size.width >= 1080 {
+                    runSummary
+                        .frame(width: 280)
+                        .padding(.top, 18)
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 760, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: sections
@@ -358,6 +366,45 @@ struct ClickerView: View {
         case .foregroundRecommended: return .red
         case .noTarget: return .secondary
         }
+    }
+
+    private var runSummary: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Ready to run", systemImage: "cursorarrow.click.2")
+                .font(.headline)
+            Divider()
+            summaryRow("Interval", "\(state.intervalTotalMs) ms")
+            summaryRow("Click", "\(state.button.rawValue.capitalized) · \(state.kind.rawValue)")
+            summaryRow("Mode", modeLabel)
+            summaryRow("Repeat", state.repeatCount == 0 ? "Until stopped" : "\(state.repeatCount) clicks")
+            Divider()
+            Label(state.backgroundCompatibility.title, systemImage: compatibilityIcon)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(compatibilityColor)
+            Text("Use ⌘⇧A to start or stop clicking. Stop All is always available in the status bar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var modeLabel: String {
+        switch state.mode {
+        case .currentCursor: return "Current cursor"
+        case .fixedPoint: return "Fixed point"
+        case .multipoint: return "\(state.multipoints.count) points"
+        }
+    }
+
+    private func summaryRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).multilineTextAlignment(.trailing)
+        }
+        .font(.callout)
     }
 
     // MARK: pieces
@@ -732,14 +779,17 @@ struct MacrosView: View {
                         TextField("Name", text: $state.currentMacro.name)
                         HStack {
                             Text("Loops").frame(width: 64, alignment: .leading)
-                            TextField("0 = infinite", value: $state.currentMacro.loopCount,
+                            TextField("Count", value: $state.currentMacro.loopCount,
                                       format: .number)
-                                .frame(width: 100)
+                                .frame(width: 72)
                             Stepper("", value: $state.currentMacro.loopCount, in: 0...10_000)
                                 .labelsHidden()
-                            Text(state.currentMacro.loopCount == 0 ? "Infinite" : "times")
+                            Text(state.currentMacro.loopCount == 0 ? "Runs continuously" : "times")
                                 .foregroundStyle(.secondary)
                         }
+                        Text("Set the count to 0 to repeat until stopped.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Section("Steps") {
                         stepsList
