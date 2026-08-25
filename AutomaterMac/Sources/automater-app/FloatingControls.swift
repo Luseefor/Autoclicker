@@ -18,6 +18,9 @@ enum FloatingControls {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.titlebarAppearsTransparent = true
         panel.contentView = NSHostingView(rootView: view)
         panel.center()
         panel.makeKeyAndOrderFront(nil)
@@ -55,6 +58,7 @@ private struct FloatingControlsView: View {
         }
         .padding(18)
         .frame(width: 330, height: 280, alignment: .topLeading)
+        .background(.ultraThinMaterial)
     }
 
     private var modeLabel: String {
