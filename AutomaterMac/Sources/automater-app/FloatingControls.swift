@@ -9,7 +9,7 @@ enum FloatingControls {
         if let panel, panel.isVisible { panel.orderOut(nil); return }
         let view = FloatingControlsView().environmentObject(state)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 330, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 330, height: 280),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered, defer: false
         )
@@ -54,7 +54,7 @@ private struct FloatingControlsView: View {
             }
         }
         .padding(18)
-        .frame(width: 330, height: 360, alignment: .topLeading)
+        .frame(width: 330, height: 280, alignment: .topLeading)
     }
 
     private var modeLabel: String {
