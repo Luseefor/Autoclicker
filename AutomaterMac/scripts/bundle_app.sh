@@ -1,5 +1,9 @@
 #!/bin/zsh
-# Bundle Automater.app from a release build + ad-hoc codesign (+ zip).
+# Bundle Automater.app from a release build, sign it, and optionally notarize.
+#
+# For a distributable build set DEVELOPER_ID_APPLICATION to the exact
+# Developer ID Application identity and NOTARY_PROFILE to a keychain profile
+# created with `xcrun notarytool store-credentials`. Then run with NOTARIZE=1.
 #
 # Signing happens in a clean staging dir outside the (possibly iCloud/FileProvider
 # synced) repo: system-attached com.apple.provenance attributes make codesign
@@ -52,9 +56,16 @@ find "$APP" -name '._*' -delete 2>/dev/null || true
 
 # Sign with a stable identity when one exists (keeps the TCC Accessibility
 # grant valid across rebuilds); ad-hoc otherwise (grant resets each build).
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-  | awk -F'"' '/1 valid identities/{next} /"(.+)"/{print $2; exit}')
-codesign --force -s "${IDENTITY:--}" "$APP"
+IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/Developer ID Application:/{print $2; exit}')
+fi
+if [ -n "$IDENTITY" ]; then
+  codesign --force --options runtime --timestamp -s "$IDENTITY" "$APP"
+else
+  codesign --force -s - "$APP"
+fi
 codesign -v "$APP"
 echo "signed: $APP (identity: ${IDENTITY:-ad-hoc})"
 
@@ -64,5 +75,17 @@ rm -rf "$DIST/Automater.app"
 cp -R "$APP" "$DIST/Automater.app"
 codesign -v "$DIST/Automater.app"
 
-cd "$DIST" && rm -f Automater.zip && zip -qry Automater.zip Automater.app
+cd "$DIST" && rm -f Automater.zip && ditto -c -k --keepParent Automater.app Automater.zip
 echo "zipped: $DIST/Automater.zip ($(du -h Automater.zip | cut -f1))"
+
+if [ "${NOTARIZE:-0}" = "1" ]; then
+  if [ -z "$IDENTITY" ] || [ -z "${NOTARY_PROFILE:-}" ]; then
+    echo "NOTARIZE=1 needs DEVELOPER_ID_APPLICATION (or an installed Developer ID identity) and NOTARY_PROFILE" >&2
+    exit 2
+  fi
+  xcrun notarytool submit "$DIST/Automater.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DIST/Automater.app"
+  xcrun stapler validate "$DIST/Automater.app"
+  spctl --assess --type execute --verbose=4 "$DIST/Automater.app"
+  echo "notarized and stapled: $DIST/Automater.app"
+fi
