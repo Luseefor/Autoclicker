@@ -59,7 +59,7 @@ find "$APP" -name '._*' -delete 2>/dev/null || true
 IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
 if [ -z "$IDENTITY" ]; then
   IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-    | awk -F'"' '/"Automater Dev"/{print $2; exit}')
+    | awk '/"Automater Dev"/{print $2; exit}')
 fi
 if [ -z "$IDENTITY" ]; then
   IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
