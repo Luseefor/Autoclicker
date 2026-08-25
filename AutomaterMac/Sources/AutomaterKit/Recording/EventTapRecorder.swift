@@ -130,7 +130,10 @@ public final class EventTapRecorder {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
             if WindowScanner.ownsPoint(cgLocation: event.location) { return }
         case .keyDown, .keyUp, .flagsChanged:
-            if NSApplication.shared.isActive { return }
+            // During recording Automater hides its own UI but can remain the
+            // active app briefly. Keep those keys; otherwise the first chord
+            // entered in the target app is silently missing from the macro.
+            if NSApplication.shared.isActive && !NSApplication.shared.isHidden { return }
         default:
             break
         }
