@@ -64,6 +64,9 @@ public struct EventPoster: Sendable {
         ) else { return }
 
         event.location = CGPoint(x: x, y: y)
+        // Keep the event's button payload explicit.  Some targets inspect
+        // this field rather than inferring it from the event type.
+        event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.cgButton.rawValue))
         event.setIntegerValueField(.clickState, value: Int64(clickState))
         if let windowNumber {
             event.setIntegerValueField(

@@ -20,7 +20,15 @@ public actor MacroEngine {
         isPlaying = true
         onStatus("Playing: \(macro.name)")
 
-        if !backgroundToApp, macro.activateBeforePlay {
+        // Unicode text and keyboard events are not reliably accepted by
+        // background processes on macOS.  A macro containing either must run
+        // with its target focused; mouse-only macros can still stay in the
+        // background without moving the pointer.
+        let requiresForegroundInput = macro.steps.contains {
+            $0.type == "type" || $0.type == "key" || $0.type == "key_down" || $0.type == "key_up"
+        }
+        let effectiveBackground = backgroundToApp && !requiresForegroundInput
+        if (!effectiveBackground || requiresForegroundInput), macro.activateBeforePlay {
             activateTarget(macro)
         }
 
@@ -33,7 +41,7 @@ public actor MacroEngine {
                 for step in macro.steps {
                     if Task.isCancelled { break }
                     await self?.run(step: step, macro: macro,
-                                    bg: backgroundToApp, mode: deliveryMode)
+                                    bg: effectiveBackground, mode: deliveryMode)
                     let delay = Double(max(0, step.delayMs)) / 1000.0
                         / max(0.05, macro.speed)
                     if delay > 0 {

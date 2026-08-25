@@ -953,6 +953,14 @@ extension AppState {
         if useRecordedForPlay && !recordedSteps.isEmpty {
             m.steps = recordedSteps
         }
+        // The target picker configures clicker playback as well as macros.
+        // Copy its current identity into the transient macro so recorded text
+        // and keys can focus the intended app before replay.
+        if let target = targetWindow {
+            m.targetAppBundleId = target.bundleId
+            m.targetAppName = target.ownerName
+            m.targetWindowTitle = target.title.isEmpty ? nil : target.title
+        }
         return m
     }
 }
