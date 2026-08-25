@@ -21,9 +21,9 @@ if pgrep -f "$DEST/Contents/MacOS/Automater" >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -d "$DEST" ]]; then
-  mv "$DEST" "$HOME/.Trash/Automater-previous-$(date +%Y%m%d-%H%M%S).app"
-fi
+# Keep the destination bundle in place. Moving it to Trash before every
+# update can make TCC treat Accessibility as a new app permission request.
+# `ditto` replaces its contents while retaining the installed bundle path.
 ditto "$APP" "$DEST"
 xattr -cr "$DEST"
 codesign --verify --deep --strict "$DEST"

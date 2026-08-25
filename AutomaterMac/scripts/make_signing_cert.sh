@@ -8,6 +8,14 @@
 set -e
 
 NAME="Automater Dev"
+
+# A pre-existing identity is the desired state. Recreating it changes the
+# code requirement and forces macOS to ask for Accessibility again.
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$NAME\""; then
+  echo "✅ stable identity '$NAME' already exists — keeping it"
+  exit 0
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 CNF="$WORK/cert.cnf"
