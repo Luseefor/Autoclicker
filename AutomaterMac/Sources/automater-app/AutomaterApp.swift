@@ -486,6 +486,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    func toggleFloatingControls() {
+        FloatingControls.toggle(state: self)
+    }
+
     func grabFixedPoint() {
         let loc = EventPoster.cursorLocation
         fixedX = Int(loc.x)

@@ -79,6 +79,9 @@ struct MainView: View {
                 Button("Stop All") { state.stopAll() }
                     .controlSize(.small)
             }
+            Button("Controls") { state.toggleFloatingControls() }
+                .controlSize(.small)
+                .help("Show or hide the always-on-top start and stop controls")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -385,6 +388,9 @@ struct ClickerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Button("Pin Controls on Top") { state.toggleFloatingControls() }
+                .buttonStyle(.bordered)
+                .help("Shows a small start/stop panel above other windows and Spaces.")
         }
         .padding(16)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -779,9 +785,9 @@ struct MacrosView: View {
                         TextField("Name", text: $state.currentMacro.name)
                         HStack {
                             Text("Loops").frame(width: 64, alignment: .leading)
-                            TextField("Count", value: $state.currentMacro.loopCount,
+                            TextField("", value: $state.currentMacro.loopCount,
                                       format: .number)
-                                .frame(width: 72)
+                                .frame(width: 54)
                             Stepper("", value: $state.currentMacro.loopCount, in: 0...10_000)
                                 .labelsHidden()
                             Text(state.currentMacro.loopCount == 0 ? "Runs continuously" : "times")
