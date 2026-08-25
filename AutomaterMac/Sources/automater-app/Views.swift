@@ -307,15 +307,48 @@ struct ClickerView: View {
             Toggle("Click target app in the background (pointer stays put)",
                    isOn: $state.backgroundToApp)
             Picker("Delivery", selection: $state.deliveryMode) {
-                Text("Accessibility (AXPress)").tag(ClickerConfig.DeliveryMode.accessibility)
-                Text("Synthetic events").tag(ClickerConfig.DeliveryMode.events)
+                Text("Smart background (AX + events)").tag(ClickerConfig.DeliveryMode.accessibility)
+                Text("Synthetic events only").tag(ClickerConfig.DeliveryMode.events)
             }
             .pickerStyle(.radioGroup)
             .disabled(!state.backgroundToApp)
+            HStack(spacing: 8) {
+                Image(systemName: compatibilityIcon)
+                    .foregroundStyle(compatibilityColor)
+                Text(state.backgroundCompatibility.title)
+                    .font(.callout.weight(.medium))
+                Spacer()
+                Button("Check Compatibility") {
+                    state.checkBackgroundCompatibility()
+                }
+                .disabled(state.targetWindow == nil)
+            }
+            Text(state.backgroundCompatibility.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } header: {
             Text("Delivery")
         } footer: {
             Text(targetSummary)
+        }
+    }
+
+    private var compatibilityIcon: String {
+        switch state.backgroundCompatibility {
+        case .likely: return "checkmark.circle.fill"
+        case .syntheticOnly: return "exclamationmark.triangle.fill"
+        case .foregroundRecommended: return "hand.raised.fill"
+        case .noTarget: return "questionmark.circle"
+        }
+    }
+
+    private var compatibilityColor: Color {
+        switch state.backgroundCompatibility {
+        case .likely: return .green
+        case .syntheticOnly: return .orange
+        case .foregroundRecommended: return .red
+        case .noTarget: return .secondary
         }
     }
 
@@ -519,6 +552,10 @@ struct TargetPickerView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    Label(state.backgroundCompatibility.title,
+                          systemImage: compatibilityIcon)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(compatibilityColor)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -545,6 +582,24 @@ struct TargetPickerView: View {
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal)
         .padding(.top, 10)
+    }
+
+    private var compatibilityIcon: String {
+        switch state.backgroundCompatibility {
+        case .likely: return "checkmark.circle.fill"
+        case .syntheticOnly: return "exclamationmark.triangle.fill"
+        case .foregroundRecommended: return "hand.raised.fill"
+        case .noTarget: return "questionmark.circle"
+        }
+    }
+
+    private var compatibilityColor: Color {
+        switch state.backgroundCompatibility {
+        case .likely: return .green
+        case .syntheticOnly: return .orange
+        case .foregroundRecommended: return .red
+        case .noTarget: return .secondary
+        }
     }
 }
 

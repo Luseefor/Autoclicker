@@ -182,6 +182,38 @@ struct RunningApp: Identifiable {
     var id: Int32 { app.processIdentifier }
 }
 
+/// A conservative preflight result. This reports whether macOS exposes a
+/// supported background-delivery path; it never claims that an app accepted a
+/// click, because many apps do not expose an acknowledgement for that.
+enum BackgroundCompatibility {
+    case noTarget
+    case likely
+    case syntheticOnly
+    case foregroundRecommended
+
+    var title: String {
+        switch self {
+        case .noTarget: return "No target"
+        case .likely: return "Background likely supported"
+        case .syntheticOnly: return "Synthetic-event delivery"
+        case .foregroundRecommended: return "Foreground recommended"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .noTarget:
+            return "Choose a target app before checking compatibility."
+        case .likely:
+            return "The target exposes macOS accessibility windows. Smart background delivery can try an accessibility action first."
+        case .syntheticOnly:
+            return "This target previously ignored accessibility actions. Automater will use synthetic background events, which the app may still reject."
+        case .foregroundRecommended:
+            return "The target exposes no usable accessibility windows. Background delivery is unlikely to work; use foreground mode."
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     // Clicker
@@ -230,6 +262,21 @@ final class AppState: ObservableObject {
     @Published var isPicking = false
     @Published var isCapturingFixedPoint = false
     @Published var hasFixedPoint = false
+
+    var backgroundCompatibility: BackgroundCompatibility {
+        guard let targetWindow else { return .noTarget }
+        let key = targetWindow.bundleId ?? "pid:\(targetWindow.pid)"
+        if Storage.loadDeliveryMemory()[key] == "events" {
+            return .syntheticOnly
+        }
+        return AXBridge.hasAXWindows(appPID: targetWindow.pid)
+            ? .likely : .foregroundRecommended
+    }
+
+    func checkBackgroundCompatibility() {
+        let result = backgroundCompatibility
+        status = "\(result.title): \(result.detail)"
+    }
 
     init() {
         loadFromSettings()
@@ -674,4 +721,3 @@ final class AppState: ObservableObject {
         }
     }
 }
-
