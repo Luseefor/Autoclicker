@@ -54,7 +54,7 @@ func render(side: CGFloat) -> NSImage {
     ctx.clip()
     let grad = CGGradient(
         colorsSpace: CGColorSpaceCreateDeviceRGB(),
-        colors: [srgb(0.38, 0.53, 0.99), srgb(0.15, 0.25, 0.82)] as CFArray,
+        colors: [srgb(0.20, 0.12, 0.55), srgb(0.04, 0.06, 0.24)] as CFArray,
         locations: [0, 1])!
     ctx.drawLinearGradient(
         grad,
@@ -80,9 +80,9 @@ func render(side: CGFloat) -> NSImage {
     ctx.addPath(shell)
     ctx.clip()
     let ripples: [(radius: CGFloat, width: CGFloat, alpha: CGFloat)] = [
-        (150 * u, 26 * u, 0.50),
-        (238 * u, 21 * u, 0.32),
-        (330 * u, 17 * u, 0.18),
+        (150 * u, 24 * u, 0.68),
+        (238 * u, 18 * u, 0.38),
+        (330 * u, 14 * u, 0.22),
     ]
     for r in ripples {
         ctx.setStrokeColor(srgb(1, 1, 1, r.alpha))
@@ -92,7 +92,7 @@ func render(side: CGFloat) -> NSImage {
             width: r.radius * 2, height: r.radius * 2))
     }
     // impact point where ripples converge
-    ctx.setFillColor(srgb(1, 1, 1, 0.92))
+    ctx.setFillColor(srgb(0.30, 0.96, 1, 0.95))
     ctx.fillEllipse(in: CGRect(
         x: hotspot.x - 20 * u, y: hotspot.y - 20 * u, width: 40 * u, height: 40 * u))
     ctx.restoreGState()
@@ -116,11 +116,11 @@ func render(side: CGFloat) -> NSImage {
     ctx.setShadow(offset: CGSize(width: 5 * u, height: -9 * u),
                   blur: 22 * u, color: srgb(0.02, 0.05, 0.25, 0.45))
     ctx.addPath(arrow)
-    ctx.setFillColor(srgb(1, 1, 1))
+    ctx.setFillColor(srgb(0.98, 0.99, 1))
     ctx.fillPath()
     ctx.restoreGState()
     ctx.addPath(arrow)
-    ctx.setStrokeColor(srgb(0.10, 0.16, 0.48, 0.30))
+    ctx.setStrokeColor(srgb(0.22, 0.10, 0.52, 0.55))
     ctx.setLineWidth(3 * u)
     ctx.strokePath()
 
