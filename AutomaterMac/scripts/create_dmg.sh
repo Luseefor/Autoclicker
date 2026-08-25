@@ -22,6 +22,9 @@ swift "$ROOT/AutomaterMac/scripts/make_dmg_background.swift" "$STAGE/.background
 hdiutil create -size 40m -fs HFS+ -volname "$VOLUME" -type UDIF "$RW" >/dev/null
 MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/\/Volumes\// {print $3; exit}')"
 trap 'hdiutil detach "$MOUNT" -quiet 2>/dev/null || true; rm -rf "$STAGE"' EXIT
+# Finder metadata is not signed; ensure it cannot be copied from the working
+# distribution bundle into the install image.
+xattr -cr "$APP" 2>/dev/null || true
 cp -R "$APP" "$MOUNT/Automater.app"
 ln -s /Applications "$MOUNT/Applications"
 mkdir -p "$MOUNT/.background"
@@ -46,6 +49,9 @@ tell application "Finder"
   end tell
 end tell
 APPLESCRIPT
+# Finder can tag the app while laying out the window.  Remove those tags from
+# the mounted copy before converting it into the final read-only image.
+xattr -cr "$MOUNT/Automater.app" 2>/dev/null || true
 sync
 hdiutil detach "$MOUNT" -quiet
 hdiutil convert "$RW" -format UDZO -o "$OUT" >/dev/null
