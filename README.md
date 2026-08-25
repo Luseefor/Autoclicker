@@ -4,7 +4,7 @@ Automater is a macOS desktop automation app for clicking, macros, and recording.
 
 ## Safety and compatibility
 
-Background delivery uses documented macOS accessibility actions and synthetic events. Apps may reject these inputs; Automater reports that as foreground recommended. It does not attempt to bypass app, game, or anti-cheat input protections.
+Background delivery uses documented macOS accessibility actions and synthetic events. Apps may reject these inputs; Automater reports that as foreground recommended. It does not attempt to bypass app input protections.
 
 ## Testing
 

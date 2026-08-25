@@ -170,7 +170,7 @@ public actor ClickerEngine {
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
                     if !AXBridge.hasAXWindows(appPID: pid) {
-                        reportOnce("Target exposes no accessibility (game?) — if clicks don't land, turn off background delivery")
+                        reportOnce("Target exposes no accessibility — if clicks don't land, turn off background delivery")
                     }
                     AXBridge.enableAccessibility(appPID: pid)
                     for _ in 0..<20 {
@@ -250,7 +250,7 @@ public actor ClickerEngine {
                     kind: config.clickKind
                 )
                 Self.log.info("AX unreachable at (\(Int(point.x)),\(Int(point.y))) pid \(pid) — routed synthetic-event fallback")
-                report("Target obscured — using synthetic-event fallback (games like Roblox ignore this; use foreground delivery)")
+                report("Target obscured — using synthetic-event fallback; use foreground delivery if clicks do not land")
             case .events:
                 let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
                 poster.backgroundClick(
