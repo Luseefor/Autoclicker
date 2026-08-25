@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import AppKit
 
 /// Plays Macro steps — foreground or background, with loops and speed.
 public actor MacroEngine {
@@ -18,6 +19,10 @@ public actor MacroEngine {
         stop(silent: true)
         isPlaying = true
         onStatus("Playing: \(macro.name)")
+
+        if !backgroundToApp, macro.activateBeforePlay {
+            activateTarget(macro)
+        }
 
         let macro = macro
         task = Task { [weak self] in
@@ -75,7 +80,9 @@ public actor MacroEngine {
 
         case "move":
             guard let p = resolvePoint(step, macro: macro) else { return }
-            poster.moveCursor(x: p.x, y: p.y)
+            let target = bg ? bgTarget(step, macro) : .none
+            poster.moveCursor(x: p.x, y: p.y, pid: target.pid,
+                              windowNumber: target.windowNumber)
 
         case "scroll":
             await scrollStep(step, macro: macro, bg: bg)
@@ -87,7 +94,7 @@ public actor MacroEngine {
             key(step, bg: bg, macro: macro, mode: mode)
 
         case "type":
-            typeText(step.text ?? "")
+            typeText(step.text ?? "", pid: bg ? bgTarget(step, macro).pid : nil)
 
         default:
             break
@@ -126,6 +133,13 @@ public actor MacroEngine {
         )
     }
 
+    private func activateTarget(_ macro: Macro) {
+        if let bundleId = macro.targetAppBundleId,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+            app.activate(options: [.activateIgnoringOtherApps])
+        }
+    }
+
     // MARK: delivery
 
     private func click(
@@ -133,6 +147,7 @@ public actor MacroEngine {
         bg: Bool, mode: ClickerConfig.DeliveryMode
     ) {
         let kind = ClickKind(rawValue: step.clickKind) ?? .single
+        let presses = step.clicks > 1 ? step.clicks : kind.presses
         let button = MouseButton(rawValue: step.button ?? "left") ?? .left
 
         if bg {
@@ -144,17 +159,29 @@ public actor MacroEngine {
             AXBridge.enableAccessibility(appPID: pid)
             switch mode {
             case .accessibility:
-                for _ in 0..<kind.presses {
-                    AXBridge.pressAt(appPID: pid, x: p.x, y: p.y)
-                    if kind.presses > 1 { Thread.sleep(forTimeInterval: 0.05) }
+                var landed = false
+                for _ in 0..<presses {
+                    landed = AXBridge.pressAt(appPID: pid, x: p.x, y: p.y) || landed
+                    if presses > 1 { Thread.sleep(forTimeInterval: 0.05) }
+                }
+                if !landed {
+                    for _ in 0..<presses {
+                        poster.backgroundClick(x: p.x, y: p.y, pid: pid,
+                                               windowNumber: target.windowNumber,
+                                               button: button, kind: .single)
+                    }
                 }
             case .events:
-                poster.backgroundClick(x: p.x, y: p.y, pid: pid,
-                                       windowNumber: target.windowNumber,
-                                       button: button, kind: kind)
+                for _ in 0..<presses {
+                    poster.backgroundClick(x: p.x, y: p.y, pid: pid,
+                                           windowNumber: target.windowNumber,
+                                           button: button, kind: .single)
+                }
             }
         } else {
-            poster.foregroundClick(x: p.x, y: p.y, button: button, kind: kind)
+            for _ in 0..<presses {
+                poster.foregroundClick(x: p.x, y: p.y, button: button, kind: .single)
+            }
         }
     }
 
@@ -302,6 +329,8 @@ public actor MacroEngine {
     private func key(_ step: MacroStep, bg: Bool, macro: Macro, mode: ClickerConfig.DeliveryMode) {
         let combo = step.key ?? ""
         if bg, let pid = bgTarget(step, macro).pid {
+            if step.type == "key_down", EventPoster().keyPhase(combo, pid: pid, keyDown: true) { return }
+            if step.type == "key_up", EventPoster().keyPhase(combo, pid: pid, keyDown: false) { return }
             if EventPoster().keyCombo(combo, pid: pid) { return }
         }
         // Global fallback via chord presses.
@@ -378,7 +407,7 @@ public actor MacroEngine {
     }
 
     /// Unicode typing via event string payload (covers any character).
-    private func typeText(_ text: String) {
+    private func typeText(_ text: String, pid: pid_t? = nil) {
         let src = CGEventSource(stateID: .combinedSessionState)
         for ch in text {
             guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
@@ -386,9 +415,9 @@ public actor MacroEngine {
             let utf = Array(ch.utf16)
             down.keyboardSetUnicodeString(stringLength: utf.count, unicodeString: utf)
             up.keyboardSetUnicodeString(stringLength: utf.count, unicodeString: utf)
-            down.post(tap: .cghidEventTap)
+            if let pid { down.postToPid(pid) } else { down.post(tap: .cghidEventTap) }
             usleep(8000)
-            up.post(tap: .cghidEventTap)
+            if let pid { up.postToPid(pid) } else { up.post(tap: .cghidEventTap) }
             usleep(12000)
         }
     }

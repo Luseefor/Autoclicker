@@ -236,6 +236,21 @@ public struct EventPoster: Sendable {
         return true
     }
 
+    /// Routes either the press or release side of a simple key/chord to a
+    /// process, preserving recorded key_down/key_up macro semantics.
+    @discardableResult
+    public func keyPhase(_ combo: String, pid: pid_t, keyDown: Bool) -> Bool {
+        let parts = combo.split(separator: "+").map { $0.lowercased() }
+        guard let tailName = parts.last, let tail = KeyCodeMap.keycode(for: tailName) else { return false }
+        let mods = parts.dropLast().compactMap { KeyCodeMap.keycode(for: String($0)) }
+        let source = CGEventSource(stateID: .hidSystemState)
+        let codes = keyDown ? Array(mods) + [tail] : [tail] + mods.reversed()
+        for code in codes {
+            CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: keyDown)?.postToPid(pid)
+        }
+        return true
+    }
+
     private static func flag(forVirtual code: UInt16) -> CGEventFlags {
         switch code {
         case 55, 54: return .maskCommand
