@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build a polished drag-to-Applications disk image from dist/Automater.app.
+# Build an automation-themed drag-to-Applications DMG.
 set -euo pipefail
 
 ROOT="${0:A:h:h:h}"
@@ -15,7 +15,6 @@ trap 'rm -rf "$STAGE"' EXIT
 rm -f "$OUT" "$RW"
 mkdir -p "$STAGE/.background"
 
-# A simple native background keeps the DMG self-contained and readable.
 swift "$ROOT/AutomaterMac/scripts/make_dmg_background.swift" "$STAGE/.background/background.png"
 hdiutil create -size 40m -fs HFS+ -volname "$VOLUME" -format UDRW "$RW" >/dev/null
 MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/\/Volumes\// {print $3; exit}')"
@@ -34,7 +33,7 @@ tell application "Finder"
     set bounds of container window to {100, 100, 780, 520}
     set viewOptions to the icon view options of container window
     set arrangement of viewOptions to not arranged
-    set icon size of viewOptions to 96
+    set icon size of viewOptions to 112
     set background picture of viewOptions to file ".background:background.png"
     set position of item "Automater.app" to {190, 215}
     set position of item "Applications" to {490, 215}

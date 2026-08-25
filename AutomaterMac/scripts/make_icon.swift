@@ -116,12 +116,12 @@ func render(side: CGFloat) -> NSImage {
     ctx.setShadow(offset: CGSize(width: 5 * u, height: -9 * u),
                   blur: 22 * u, color: srgb(0.02, 0.05, 0.25, 0.45))
     ctx.addPath(arrow)
-    ctx.setFillColor(srgb(0.98, 0.99, 1))
+    ctx.setFillColor(srgb(0.035, 0.04, 0.075))
     ctx.fillPath()
     ctx.restoreGState()
     ctx.addPath(arrow)
-    ctx.setStrokeColor(srgb(0.22, 0.10, 0.52, 0.55))
-    ctx.setLineWidth(3 * u)
+    ctx.setStrokeColor(srgb(1, 1, 1, 0.96))
+    ctx.setLineWidth(9 * u)
     ctx.strokePath()
 
     // --- top sheen + inner rim ---
