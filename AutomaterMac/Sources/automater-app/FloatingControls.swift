@@ -18,9 +18,13 @@ enum FloatingControls {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.titlebarAppearsTransparent = true
+        // Keep the standard title bar visible: it is the reliable drag area
+        // for moving this always-on-top window.  A slight window alpha still
+        // gives the panel a soft glass feel without losing that affordance.
+        panel.isOpaque = true
+        panel.backgroundColor = .windowBackgroundColor
+        panel.titlebarAppearsTransparent = false
+        panel.alphaValue = 0.96
         panel.contentView = NSHostingView(rootView: view)
         panel.center()
         panel.makeKeyAndOrderFront(nil)
