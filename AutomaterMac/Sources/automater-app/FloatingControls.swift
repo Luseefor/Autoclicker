@@ -9,7 +9,7 @@ enum FloatingControls {
         if let panel, panel.isVisible { panel.orderOut(nil); return }
         let view = FloatingControlsView().environmentObject(state)
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 118),
+            contentRect: NSRect(x: 0, y: 0, width: 330, height: 360),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered, defer: false
         )
@@ -30,9 +30,21 @@ private struct FloatingControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(state.isClicking ? "Clicker running" : "Clicker ready",
-                  systemImage: state.isClicking ? "play.circle.fill" : "cursorarrow.click")
+            Label(state.isClicking ? "Clicker running" : "Ready to run",
+                  systemImage: "cursorarrow.click.2")
+                .font(.headline)
                 .foregroundStyle(state.isClicking ? .green : .primary)
+            Divider()
+            row("Interval", "\(state.intervalTotalMs) ms")
+            row("Click", "\(state.button.rawValue.capitalized) · \(state.kind.rawValue)")
+            row("Mode", modeLabel)
+            row("Repeat", state.repeatCount == 0 ? "Until stopped" : "\(state.repeatCount) clicks")
+            Divider()
+            Label(state.backgroundCompatibility.title, systemImage: "questionmark.circle")
+                .foregroundStyle(.secondary)
+            Text("Stays above other windows and Spaces.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 Button(state.isClicking ? "Stop" : "Start") { state.toggleClicker() }
                     .buttonStyle(.borderedProminent)
@@ -41,7 +53,23 @@ private struct FloatingControlsView: View {
                 Spacer()
             }
         }
-        .padding(16)
-        .frame(width: 260, height: 118, alignment: .topLeading)
+        .padding(18)
+        .frame(width: 330, height: 360, alignment: .topLeading)
+    }
+
+    private var modeLabel: String {
+        switch state.mode {
+        case .currentCursor: return "Current cursor"
+        case .fixedPoint: return "Fixed point"
+        case .multipoint: return "\(state.multipoints.count) points"
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).multilineTextAlignment(.trailing)
+        }
     }
 }
