@@ -91,10 +91,12 @@ func render(side: CGFloat) -> NSImage {
             x: hotspot.x - r.radius, y: hotspot.y - r.radius,
             width: r.radius * 2, height: r.radius * 2))
     }
-    // impact point where ripples converge
+    // Cursor mass is visually centered independently of the ripple source.
+    let cursorHotspot = CGPoint(x: hotspot.x - 100 * u, y: hotspot.y + 76 * u)
+    // impact point at the cursor tip
     ctx.setFillColor(srgb(0.30, 0.96, 1, 0.95))
     ctx.fillEllipse(in: CGRect(
-        x: hotspot.x - 20 * u, y: hotspot.y - 20 * u, width: 40 * u, height: 40 * u))
+        x: cursorHotspot.x - 20 * u, y: cursorHotspot.y - 20 * u, width: 40 * u, height: 40 * u))
     ctx.restoreGState()
 
     // --- cursor arrow (classic silhouette, tip on the hotspot) ---
@@ -105,8 +107,8 @@ func render(side: CGFloat) -> NSImage {
     let s: CGFloat = 23 * u
     let arrow = CGMutablePath()
     for (i, pt) in arrowUnits.enumerated() {
-        let x = hotspot.x + (pt.0 - 5.5) * s
-        let y = hotspot.y - (pt.1 - 3.21) * s   // flip: source space is y-down
+        let x = cursorHotspot.x + (pt.0 - 5.5) * s
+        let y = cursorHotspot.y - (pt.1 - 3.21) * s   // flip: source space is y-down
         if i == 0 { arrow.move(to: CGPoint(x: x, y: y)) }
         else { arrow.addLine(to: CGPoint(x: x, y: y)) }
     }
