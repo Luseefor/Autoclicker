@@ -518,7 +518,6 @@ final class AppState: ObservableObject {
         isCapturingFixedPoint = fixedPointPicker.active
         if isCapturingFixedPoint {
             status = "Click anywhere to set the fixed point — Esc to cancel"
-            hideForInputCapture()
         }
     }
 
@@ -561,7 +560,6 @@ final class AppState: ObservableObject {
         isPicking = pointPicker.active
         if isPicking {
             status = "Picking points — click to add, Esc to finish"
-            hideForInputCapture()
         }
     }
 
