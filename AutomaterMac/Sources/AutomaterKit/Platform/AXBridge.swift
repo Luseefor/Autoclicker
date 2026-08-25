@@ -231,16 +231,44 @@ public enum AXBridge {
     }
 
     /// Topmost AX window of the app whose frame contains the point.
+    ///
+    /// Chromium browsers (Brave/Chrome) on modern macOS expose no usable
+    /// kAXWindowsAttribute — the real window hangs off AXFocusedWindow
+    /// (per-app state, works even when the app is covered), so it joins the
+    /// candidates. Windows with live children are preferred over dummies.
     private static func windowContaining(appPID: pid_t, x: CGFloat, y: CGFloat) -> AXUIElement? {
         let app = AXUIElementCreateApplication(appPID)
-        var cfWindows: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &cfWindows) == .success,
-              let windows = cfWindows as? [AXUIElement] else { return nil }
         let point = CGPoint(x: x, y: y)
-        for window in windows.reversed() {  // last = topmost
-            if let f = axFrame(window), f.contains(point) { return window }
+        var candidates: [AXUIElement] = []
+
+        var cfWindows: CFTypeRef?
+        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &cfWindows) == .success,
+           let windows = cfWindows as? [AXUIElement] {
+            for window in windows.reversed() {  // last = topmost
+                if let f = axFrame(window), f.contains(point) { candidates.append(window) }
+            }
         }
-        return nil
+
+        var focusedRef: CFTypeRef?
+        var focusedWindow: AXUIElement?
+        if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success,
+           let ref = focusedRef, CFGetTypeID(ref) == AXUIElementGetTypeID() {
+            focusedWindow = unsafeDowncast(ref, to: AXUIElement.self)
+        }
+        if let fw = focusedWindow,
+           let f = axFrame(fw), f.contains(point),
+           !candidates.contains(where: { $0 == fw }) {
+            candidates.append(fw)
+        }
+
+        for window in candidates {
+            var kids: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &kids) == .success,
+               let children = kids as? [AXUIElement], !children.isEmpty {
+                return window
+            }
+        }
+        return candidates.first
     }
 
     /// Depth-limited search for the deepest pressable element containing the
