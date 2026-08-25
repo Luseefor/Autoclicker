@@ -71,14 +71,12 @@ public actor ClickerEngine {
         var done = 0
         var pointIndex = 0
         var didWarmUp = false
-        // AXPress misses are common while a target window is mid-layout;
-        // report the first one only so status isn't spammed every interval.
-        var reportedMiss = false
-        func onMiss() {
-            if !reportedMiss {
-                reportedMiss = true
-                onStatus("Background click missed — no pressable element at target")
-            }
+        // Report each distinct delivery issue once per session (no spam).
+        var reportedIssues: Set<String> = []
+        func reportOnce(_ msg: String) {
+            guard !reportedIssues.contains(msg) else { return }
+            reportedIssues.insert(msg)
+            onStatus(msg)
         }
 
         while !Task.isCancelled {
@@ -159,23 +157,27 @@ public actor ClickerEngine {
 
                 // Chromium-family apps build their AX tree lazily on first
                 // query; poke until an element resolves (max ~3s) so neither
-                // AX presses nor event routing get swallowed.
+                // AX presses nor event routing get swallowed. Only poked when
+                // the tree actually looks lazy — blanket-flagging wipes the
+                // AX trees of native apps (Calculator!).
                 if config.backgroundToApp, let pid = bgTarget.pid, !didWarmUp {
                     didWarmUp = true
-                    AXBridge.enableAccessibility(appPID: pid)
-                    for _ in 0..<20 {
-                        if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
-                            break
+                    if AXBridge.needsLazyTreePoke(appPID: pid, x: point.x, y: point.y) {
+                        AXBridge.enableAccessibility(appPID: pid)
+                        for _ in 0..<20 {
+                            if AXBridge.hasElementAt(appPID: pid, x: point.x, y: point.y) {
+                                break
+                            }
+                            try await Task.sleep(nanoseconds: 150_000_000)
+                            try Task.checkCancellation()
                         }
-                        try await Task.sleep(nanoseconds: 150_000_000)
+                        try await Task.sleep(nanoseconds: 300_000_000)
                         try Task.checkCancellation()
                     }
-                    try await Task.sleep(nanoseconds: 300_000_000)
-                    try Task.checkCancellation()
                 }
 
-                _ = deliver(point: point, target: bgTarget, config: config,
-                            onMiss: onMiss)
+                deliver(point: point, target: bgTarget, config: config,
+                        report: reportOnce)
                 clicksPerformed += 1
                 done += 1
             } catch is CancellationError {
@@ -201,19 +203,31 @@ public actor ClickerEngine {
         }
     }
 
-    /// Returns true when an AX delivery observably missed (no pressable
-    /// element). Event-based and foreground paths are fire-and-forget.
+    /// Delivers one click. AX misses (fully-covered windows in AX-hostile
+    /// apps) automatically fall back to pid-routed synthetic events.
     private func deliver(
         point: CGPoint, target: ResolvedTarget, config: ClickerConfig,
-        onMiss: () -> Void
-    ) -> Bool {
+        report: (String) -> Void
+    ) {
         if config.backgroundToApp, let pid = target.pid {
             switch config.deliveryMode {
             case .accessibility:
                 let landed = poster.axClick(x: point.x, y: point.y, pid: pid,
                                             button: config.button, kind: config.clickKind)
-                if !landed { onMiss() }
-                return !landed
+                if landed { return }
+                // Tier 2: route synthetic events into the process — reaches
+                // covered windows that expose no pressable AX elements.
+                let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
+                poster.backgroundClick(
+                    x: point.x, y: point.y,
+                    pid: pid,
+                    childPIDs: Array(children.dropFirst()),
+                    windowNumber: target.windowNumber,
+                    button: config.button,
+                    kind: config.clickKind
+                )
+                Self.log.info("AX unreachable at (\(Int(point.x)),\(Int(point.y))) pid \(pid) — routed synthetic-event fallback")
+                report("Target obscured — delivering via synthetic-event fallback")
             case .events:
                 let children = AXBridge.hitTestPIDs(appPID: pid, x: point.x, y: point.y)
                 poster.backgroundClick(
@@ -224,7 +238,6 @@ public actor ClickerEngine {
                     button: config.button,
                     kind: config.clickKind
                 )
-                return false
             }
         } else {
             poster.foregroundClick(
@@ -232,7 +245,6 @@ public actor ClickerEngine {
                 button: config.button,
                 kind: config.clickKind
             )
-            return false
         }
     }
 
