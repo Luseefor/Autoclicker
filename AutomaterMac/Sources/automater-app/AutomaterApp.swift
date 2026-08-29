@@ -26,27 +26,10 @@ struct AutomaterApp: App {
         }
 
         MenuBarExtra("Automater", systemImage: "cursorarrow.click.2") {
-            Text(state.status)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Divider()
-            // No .keyboardShortcut here: the settings-configurable Carbon
-            // hotkeys (HotkeyManager) already fire these actions globally;
-            // hardcoded menu duplicates would shadow them.
-            Button(state.isClicking ? "Stop clicker" : "Start clicker") {
-                state.toggleClicker()
-            }
-            Button(state.recorder.recording ? "Stop recording" : "Start recording") {
-                state.toggleRecording()
-            }
-            Button(state.playingMacro ? "Stop macro" : "Play macro") {
-                state.playToggle()
-            }
-            Button("Stop everything") { state.stopAll() }
-            Divider()
-            Button("Quit") { NSApp.terminate(nil) }
-                .keyboardShortcut("q")
+            MenuBarControlsView()
+                .environmentObject(state)
         }
+        .menuBarExtraStyle(.window)
     }
 
     /// Native menu-bar commands (in-app; global Carbon hotkeys are separate).
@@ -79,6 +62,128 @@ struct AutomaterApp: App {
             Button("Stop Everything") { state.stopAll() }
                 .keyboardShortcut(".", modifiers: [.command])
         }
+    }
+}
+
+/// A purpose-built status-bar control surface.  Keeping this as a window
+/// rather than a stock menu gives the frequent actions enough hierarchy to be
+/// understood at a glance, without opening the full app.
+private struct MenuBarControlsView: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            Divider()
+            action(
+                title: state.isClicking ? "Stop clicker" : "Run clicker",
+                subtitle: state.isClicking ? "Clicking is active" : clickerSummary,
+                icon: state.isClicking ? "stop.fill" : "cursorarrow.click.2",
+                tint: state.isClicking ? .red : .accentColor,
+                action: state.toggleClicker
+            )
+            action(
+                title: state.isRecording ? "Stop recording" : "Record macro",
+                subtitle: state.isRecording ? "Capturing your actions" : "Capture clicks, keys, and text",
+                icon: state.isRecording ? "stop.circle.fill" : "record.circle",
+                tint: state.isRecording ? .red : .orange,
+                action: state.toggleRecording
+            )
+            action(
+                title: state.playingMacro ? "Stop macro" : "Play macro",
+                subtitle: state.playingMacro ? "Macro playback is active" : macroSummary,
+                icon: state.playingMacro ? "stop.circle.fill" : "play.circle.fill",
+                tint: state.playingMacro ? .red : .purple,
+                action: state.playToggle
+            )
+            Divider()
+            Button(role: .destructive) { state.stopAll() } label: {
+                Label("Stop All Automation", systemImage: "xmark.circle.fill")
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+
+            HStack(spacing: 8) {
+                Button("Open Automater", systemImage: "macwindow") {
+                    NSApp.unhide(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .buttonStyle(.borderless)
+                Spacer()
+                Button("Quit", systemImage: "power") { NSApp.terminate(nil) }
+                    .buttonStyle(.borderless)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(width: 300)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: state.isClicking ? "cursorarrow.click.2" : "cursorarrow.click")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(state.isClicking ? .green : .accentColor)
+                .frame(width: 30, height: 30)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Automater").font(.headline)
+                Text(currentStatus).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+                .accessibilityLabel(currentStatus)
+        }
+    }
+
+    private func action(
+        title: String, subtitle: String, icon: String, tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .foregroundStyle(tint)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.medium))
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private var clickerSummary: String {
+        "\(state.intervalTotalMs) ms · \(state.button.rawValue.capitalized) \(state.kind.rawValue)"
+    }
+
+    private var macroSummary: String {
+        let count = state.playableMacro().steps.count
+        return count == 0 ? "No steps ready" : "\(count) step\(count == 1 ? "" : "s") ready"
+    }
+
+    private var currentStatus: String {
+        if state.isRecording { return "Recording macro" }
+        if state.playingMacro { return "Playing macro" }
+        if state.isClicking { return "Clicker running" }
+        return state.status == "Idle" ? "Ready to automate" : state.status
+    }
+
+    private var statusColor: Color {
+        state.isClicking || state.isRecording || state.playingMacro ? .green : .secondary
     }
 }
 
